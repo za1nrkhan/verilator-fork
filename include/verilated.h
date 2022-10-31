@@ -81,6 +81,7 @@
 #endif
 // clang-format on
 
+class VerilatedContext;
 class VerilatedContextImp;
 class VerilatedContextImpData;
 class VerilatedCovContext;
@@ -90,6 +91,9 @@ class VerilatedFstC;
 class VerilatedFstSc;
 class VerilatedScope;
 class VerilatedScopeNameMap;
+template <class, class>
+class VerilatedTrace;
+class VerilatedTraceConfig;
 class VerilatedVar;
 class VerilatedVarNameMap;
 class VerilatedVcd;
@@ -160,7 +164,7 @@ public:
     ~VerilatedMutex() = default;
     const VerilatedMutex& operator!() const { return *this; }  // For -fthread_safety
     /// Acquire/lock mutex
-    void lock() VL_ACQUIRE() {
+    void lock() VL_ACQUIRE() VL_MT_SAFE {
         // Try to acquire the lock by spinning.  If the wait is short,
         // avoids a trap to the OS plus OS scheduler overhead.
         if (VL_LIKELY(try_lock())) return;  // Short circuit loop
@@ -172,9 +176,9 @@ public:
         m_mutex.lock();
     }
     /// Release/unlock mutex
-    void unlock() VL_RELEASE() { m_mutex.unlock(); }
+    void unlock() VL_RELEASE() VL_MT_SAFE { m_mutex.unlock(); }
     /// Try to acquire mutex.  Returns true on success, and false on failure.
-    bool try_lock() VL_TRY_ACQUIRE(true) { return m_mutex.try_lock(); }
+    bool try_lock() VL_TRY_ACQUIRE(true) VL_MT_SAFE { return m_mutex.try_lock(); }
 };
 
 /// Lock guard for mutex (ala std::unique_lock), wrapped to allow -fthread_safety checks
@@ -186,16 +190,16 @@ private:
 
 public:
     /// Construct and hold given mutex lock until destruction or unlock()
-    explicit VerilatedLockGuard(VerilatedMutex& mutexr) VL_ACQUIRE(mutexr)
+    explicit VerilatedLockGuard(VerilatedMutex& mutexr) VL_ACQUIRE(mutexr) VL_MT_SAFE
         : m_mutexr(mutexr) {  // Need () or GCC 4.8 false warning
         m_mutexr.lock();
     }
     /// Destruct and unlock the mutex
     ~VerilatedLockGuard() VL_RELEASE() { m_mutexr.unlock(); }
     /// Unlock the mutex
-    void lock() VL_ACQUIRE() { m_mutexr.lock(); }
+    void lock() VL_ACQUIRE() VL_MT_SAFE { m_mutexr.lock(); }
     /// Lock the mutex
-    void unlock() VL_RELEASE() { m_mutexr.unlock(); }
+    void unlock() VL_RELEASE() VL_MT_SAFE { m_mutexr.unlock(); }
 };
 
 #else  // !VL_THREADED
@@ -253,6 +257,40 @@ public:
 };
 
 //=========================================================================
+/// Base class of a Verilator generated (Verilated) model.
+///
+/// VerilatedModel is a base class of the user facing primary class generated
+/// by Verilator.
+
+class VerilatedModel VL_NOT_FINAL {
+    VL_UNCOPYABLE(VerilatedModel);
+
+    VerilatedContext& m_context;  // The VerilatedContext this model is instantiated under
+
+protected:
+    explicit VerilatedModel(VerilatedContext& context);
+    virtual ~VerilatedModel() = default;
+
+public:
+    /// Returns the VerilatedContext this model is instantiated under
+    /// Used to get to e.g. simulation time via contextp()->time()
+    VerilatedContext* contextp() const { return &m_context; }
+    /// Returns the hierarchical name of this module instance.
+    virtual const char* hierName() const = 0;
+    /// Returns the name of this model (the name of the generated model class).
+    virtual const char* modelName() const = 0;
+    /// Returns the thread level parallelism, this model was Verilated with. Always 1 or higher.
+    virtual unsigned threads() const = 0;
+
+private:
+    // The following are for use by Verilator internals only
+    template <class, class>
+    friend class VerilatedTrace;
+    // Run-time trace configuration requested by this model
+    virtual std::unique_ptr<VerilatedTraceConfig> traceConfig() const;
+};
+
+//=========================================================================
 /// Base class for all Verilated module classes.
 
 class VerilatedModule VL_NOT_FINAL {
@@ -265,10 +303,6 @@ public:
     ~VerilatedModule();
     const char* name() const { return m_namep; }  ///< Return name of module
 };
-
-/// Declare a module, ala SC_MODULE
-#define VL_MODULE(modname) class modname VL_NOT_FINAL : public VerilatedModule
-// Not class final in VL_MODULE, as users might be abstracting our models (--hierarchical)
 
 //=========================================================================
 // Functions overridable by user defines
@@ -362,6 +396,16 @@ protected:
 
     // Implementation details
     const std::unique_ptr<VerilatedContextImpData> m_impdatap;
+    // Number of threads to use for simulation (size of m_threadPool + 1 for main thread)
+#ifdef VL_THREADED
+    unsigned m_threads = std::thread::hardware_concurrency();
+#else
+    const unsigned m_threads = 1;
+#endif
+    // The thread pool shared by all models added to this context
+    std::unique_ptr<VerilatedVirtualBase> m_threadPool;
+    // The execution profiler shared by all models added to this context
+    std::unique_ptr<VerilatedVirtualBase> m_executionProfiler;
     // Coverage access
     std::unique_ptr<VerilatedVirtualBase> m_coveragep;  // Pointer for coveragep()
 
@@ -413,9 +457,9 @@ public:
     VerilatedCovContext* coveragep() VL_MT_SAFE;
     /// Set debug level
     /// Debug is currently global, but for forward compatibility have a per-context method
-    static void debug(int val) VL_MT_SAFE;
+    static inline void debug(int val) VL_MT_SAFE;
     /// Return debug level
-    static int debug() VL_MT_SAFE;
+    static inline int debug() VL_MT_SAFE;
     /// Set current number of errors/assertions
     void errorCount(int val) VL_MT_SAFE;
     /// Increment current number of errors/assertions
@@ -477,7 +521,7 @@ public:
     ///
     /// * Else, time comes from the legacy 'double sc_time_stamp()' which
     /// must be a function defined by the user's wrapper.
-    uint64_t time() const VL_MT_SAFE;
+    inline uint64_t time() const VL_MT_SAFE;
     /// Set current simulation time. See time() for side effect details
     void time(uint64_t value) VL_MT_SAFE { m_s.m_time = value; }
     /// Advance current simulation time. See time() for side effect details
@@ -495,6 +539,12 @@ public:
     /// Get time precision as IEEE-standard text
     const char* timeprecisionString() const VL_MT_SAFE;
 
+    /// Get number of threads used for simulation (including the main thread)
+    unsigned threads() const { return m_threads; }
+    /// Set number of threads used for simulation (including the main thread)
+    /// Can only be called before the thread pool is created (before first model is added).
+    void threads(unsigned n);
+
     /// Allow traces to at some point be enabled (disables some optimizations)
     void traceEverOn(bool flag) VL_MT_SAFE {
         if (flag) calcUnusedSigs(true);
@@ -510,12 +560,19 @@ public:
     /// releases - contact the authors before production use.
     void scopesDump() const VL_MT_SAFE;
 
-public:  // But for internal use only
+    // METHODS - public but for internal use only
+
     // Internal: access to implementation class
     VerilatedContextImp* impp() { return reinterpret_cast<VerilatedContextImp*>(this); }
     const VerilatedContextImp* impp() const {
         return reinterpret_cast<const VerilatedContextImp*>(this);
     }
+
+    void addModel(VerilatedModel*);
+
+    VerilatedVirtualBase* threadPoolp();
+    VerilatedVirtualBase*
+    enableExecutionProfiler(VerilatedVirtualBase* (*construct)(VerilatedContext&));
 
     // Internal: $dumpfile
     void dumpfile(const std::string& flag) VL_MT_SAFE_EXCLUDES(m_timeDumpMutex);
@@ -595,13 +652,13 @@ public:  // But internals only - called from VerilatedModule's
     const char* name() const { return m_namep; }
     const char* identifier() const { return m_identifierp; }
     int8_t timeunit() const { return m_timeunit; }
-    inline VerilatedSyms* symsp() const { return m_symsp; }
+    VerilatedSyms* symsp() const { return m_symsp; }
     VerilatedVar* varFind(const char* namep) const VL_MT_SAFE_POSTINIT;
     VerilatedVarNameMap* varsp() const VL_MT_SAFE_POSTINIT { return m_varsp; }
     void scopeDump() const;
     void* exportFindError(int funcnum) const;
     static void* exportFindNullError(int funcnum) VL_MT_SAFE;
-    static inline void* exportFind(const VerilatedScope* scopep, int funcnum) VL_MT_SAFE {
+    static void* exportFind(const VerilatedScope* scopep, int funcnum) VL_MT_SAFE {
         if (VL_UNLIKELY(!scopep)) return exportFindNullError(funcnum);
         if (VL_LIKELY(funcnum < scopep->m_funcnumMax)) {
             // m_callbacksp must be declared, as Max'es are > 0
@@ -670,7 +727,7 @@ public:
     /// Return debug level
     /// When multithreaded this may not immediately react to another thread
     /// changing the level (no mutex)
-    static inline int debug() VL_MT_SAFE { return s_debug; }
+    static int debug() VL_MT_SAFE { return s_debug; }
 #else
     /// Return constant 0 debug level, so C++'s optimizer rips up
     static constexpr int debug() VL_PURE { return 0; }
@@ -830,7 +887,6 @@ public:
     }
 #endif
 
-public:
     // METHODS - INTERNAL USE ONLY (but public due to what uses it)
     // Internal: Create a new module name by concatenating two strings
     // Returns pointer to thread-local static data (overwritten on next call)
@@ -877,8 +933,8 @@ private:
 #endif
 };
 
-inline void VerilatedContext::debug(int val) VL_MT_SAFE { Verilated::debug(val); }
-inline int VerilatedContext::debug() VL_MT_SAFE { return Verilated::debug(); }
+void VerilatedContext::debug(int val) VL_MT_SAFE { Verilated::debug(val); }
+int VerilatedContext::debug() VL_MT_SAFE { return Verilated::debug(); }
 
 //=========================================================================
 // Data Types

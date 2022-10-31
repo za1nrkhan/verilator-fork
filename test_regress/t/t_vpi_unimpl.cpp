@@ -9,17 +9,17 @@
 //
 //*************************************************************************
 
-#include "Vt_vpi_unimpl.h"
 #include "verilated.h"
-#include "svdpi.h"
-
-#include "Vt_vpi_unimpl__Dpi.h"
-
 #include "verilated_vcd_c.h"
+
+#include "Vt_vpi_unimpl.h"
+#include "Vt_vpi_unimpl__Dpi.h"
+#include "svdpi.h"
 // No verilated_vpi.h, make sure can link without it
 
 #include <iostream>
 
+// These require the above. Comment prevents clang-format moving them
 #include "TestVpi.h"
 
 // __FILE__ is too long
@@ -66,7 +66,7 @@ unsigned int callback_count = 0;
     }
 
 #define CHECK_RESULT_CSTR(got, exp) \
-    if (strcmp((got), (exp))) { \
+    if (std::strcmp((got), (exp))) { \
         printf("%%Error: %s:%d: GOT = '%s'   EXP = '%s'\n", FILENM, __LINE__, \
                (got) ? (got) : "<null>", (exp) ? (exp) : "<null>"); \
         return __LINE__; \

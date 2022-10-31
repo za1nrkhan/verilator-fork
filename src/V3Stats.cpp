@@ -17,15 +17,18 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3Stats.h"
+
 #include "V3Ast.h"
+#include "V3Global.h"
 
 // This visitor does not edit nodes, and is called at error-exit, so should use constant iterators
 #include "V3AstConstOnly.h"
 
 #include <iomanip>
 #include <map>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Stats class functions
@@ -60,7 +63,6 @@ private:
     VDouble0 m_statVarScpBytes;  // Statistic tracking
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     void allNodes(AstNode* nodep) {
         m_instrs += nodep->instrCount();
@@ -75,7 +77,7 @@ private:
     }
 
     // VISITORS
-    virtual void visit(AstNodeModule* nodep) override {
+    void visit(AstNodeModule* nodep) override {
         allNodes(nodep);
         if (!m_fast) {
             // Count all CFuncs below this module
@@ -84,7 +86,7 @@ private:
         // Else we recursively trace fast CFuncs from the top _eval
         // func, see visit(AstNetlist*)
     }
-    virtual void visit(AstVar* nodep) override {
+    void visit(AstVar* nodep) override {
         allNodes(nodep);
         iterateChildrenConst(nodep);
         if (m_counting && nodep->dtypep()) {
@@ -110,7 +112,7 @@ private:
             }
         }
     }
-    virtual void visit(AstVarScope* nodep) override {
+    void visit(AstVarScope* nodep) override {
         allNodes(nodep);
         iterateChildrenConst(nodep);
         if (m_counting) {
@@ -119,7 +121,7 @@ private:
             }
         }
     }
-    virtual void visit(AstNodeIf* nodep) override {
+    void visit(AstNodeIf* nodep) override {
         UINFO(4, "   IF i=" << m_instrs << " " << nodep << endl);
         allNodes(nodep);
         // Condition is part of cost allocated to PREVIOUS block
@@ -140,7 +142,7 @@ private:
                 {
                     m_counting = false;
                     m_instrs = 0.0;
-                    iterateAndNextConstNull(nodep->ifsp());
+                    iterateAndNextConstNull(nodep->thensp());
                     ifInstrs = m_instrs;
                 }
             }
@@ -157,7 +159,7 @@ private:
             // Now collect the stats
             if (m_counting) {
                 if (ifInstrs >= elseInstrs) {
-                    iterateAndNextConstNull(nodep->ifsp());
+                    iterateAndNextConstNull(nodep->thensp());
                 } else {
                     iterateAndNextConstNull(nodep->elsesp());
                 }
@@ -165,9 +167,9 @@ private:
         }
     }
     // While's we assume evaluate once.
-    // virtual void visit(AstWhile* nodep) override {
+    //  void visit(AstWhile* nodep) override {
 
-    virtual void visit(AstNodeCCall* nodep) override {
+    void visit(AstNodeCCall* nodep) override {
         allNodes(nodep);
         iterateChildrenConst(nodep);
         if (m_fast && !nodep->funcp()->entryPoint()) {
@@ -176,7 +178,7 @@ private:
             iterate(nodep->funcp());
         }
     }
-    virtual void visit(AstCFunc* nodep) override {
+    void visit(AstCFunc* nodep) override {
         if (m_fast) {
             if (!m_tracingCall && !nodep->entryPoint()) return;
             m_tracingCall = false;
@@ -188,11 +190,11 @@ private:
             iterateChildrenConst(nodep);
         }
     }
-    virtual void visit(AstNode* nodep) override {
+    void visit(AstNode* nodep) override {
         allNodes(nodep);
         iterateChildrenConst(nodep);
     }
-    virtual void visit(AstNetlist* nodep) override {
+    void visit(AstNetlist* nodep) override {
         if (m_fast && nodep->evalp()) {
             m_instrs = 0;
             m_counting = true;
@@ -218,7 +220,7 @@ public:
         // Process
         iterate(nodep);
     }
-    virtual ~StatsVisitor() override {
+    ~StatsVisitor() override {
         // Done. Publish statistics
         V3Stats::addStat(m_stage, "Instruction count, TOTAL", m_statInstr);
         V3Stats::addStat(m_stage, "Instruction count, fast critical", m_statInstrFast);
@@ -230,7 +232,7 @@ public:
             V3Stats::addStat(m_stage, "Var space, scoped, bytes", m_statVarScpBytes);
         }
         for (unsigned i = 0; i < m_statVarWidths.size(); i++) {
-            const double count = double(m_statVarWidths.at(i));
+            const double count{m_statVarWidths.at(i)};
             if (count != 0.0) {
                 if (v3Global.opt.statsVars()) {
                     const NameMap& nameMapr = m_statVarWidthNames.at(i);
@@ -248,28 +250,30 @@ public:
         }
         // Node types
         for (int type = 0; type < VNType::_ENUM_END; type++) {
-            const double count = double(m_statTypeCount.at(type));
+            const double count{m_statTypeCount.at(type)};
             if (count != 0.0) {
-                V3Stats::addStat(m_stage, string("Node count, ") + VNType(type).ascii(), count);
+                V3Stats::addStat(m_stage, std::string{"Node count, "} + VNType{type}.ascii(),
+                                 count);
             }
         }
         for (int type = 0; type < VNType::_ENUM_END; type++) {
             for (int type2 = 0; type2 < VNType::_ENUM_END; type2++) {
-                const double count = double(m_statAbove[type][type2]);
+                const double count{m_statAbove[type][type2]};
                 if (count != 0.0) {
                     V3Stats::addStat(m_stage,
-                                     (string("Node pairs, ") + VNType(type).ascii() + "_"
-                                      + VNType(type2).ascii()),
+                                     (std::string{"Node pairs, "} + VNType{type}.ascii() + "_"
+                                      + VNType{type2}.ascii()),
                                      count);
                 }
             }
         }
         // Branch pred
         for (int type = 0; type < VBranchPred::_ENUM_END; type++) {
-            const double count = double(m_statPred[type]);
+            const double count{m_statPred[type]};
             if (count != 0.0) {
-                V3Stats::addStat(
-                    m_stage, (string("Branch prediction, ") + VBranchPred(type).ascii()), count);
+                V3Stats::addStat(m_stage,
+                                 (std::string{"Branch prediction, "} + VBranchPred{type}.ascii()),
+                                 count);
             }
         }
     }

@@ -115,12 +115,12 @@ Summary:
 
    Using this argument will likely cause incorrect simulation.
 
-.. option:: --bin <filename>
+.. option:: --binary
 
-   Rarely needed.  Override the default filename for Verilator itself.
-   When a dependency (.d) file is created, this filename will become a
-   source dependency, such that a change in this binary will have make
-   rebuild the output files.
+   Create a Verilated simulator binary.  Alias for :vlopt:`--main`
+   :vlopt:`--exe` :vlopt:`--build` :vlopt:`--timing`.
+
+   See also :vlopt:`-j`.
 
 .. option:: --build
 
@@ -128,6 +128,24 @@ Summary:
    toolchain to build the model library (and executable when :vlopt:`--exe`
    is also used). Verilator manages the build itself, and for this --build
    requires GNU Make to be available on the platform.
+
+.. option:: --build-dep-bin <filename>
+
+   Rarely needed.  When a dependency (.d) file is created, this filename
+   will become a source dependency, such that a change in this binary will
+   have make rebuild the output files.  Defaults to the full path to the
+   Verilator binary.
+
+   This option was named `--bin` prior to version 4.228.
+
+.. option:: --build-jobs [<value>]
+
+   Specify the level of parallelism for :vlopt:`--build`. If zero, uses the
+   number of threads in the current hardware. Otherwise, the <value> must
+   be a positive integer specifying the maximum number of parallel build
+   jobs.
+
+   See also :vlopt:`-j`.
 
 .. option:: --cc
 
@@ -158,10 +176,7 @@ Summary:
 
 .. option:: --clk <signal-name>
 
-   With :vlopt:`--clk`, the specified signal-name is taken as a root clock
-   into the model; Verilator will mark the signal as clocker and
-   propagate the clocker attribute automatically to other signals downstream in
-   that clock tree.
+   With :vlopt:`--clk`, the specified signal is marked as a clock signal.
 
    The provided signal-name is specified using a RTL hierarchy path. For
    example, v.foo.bar.  If the signal is the input to top-module, then
@@ -173,11 +188,11 @@ Summary:
    individual bits, Verilator will attempt to decompose the vector and
    connect the single-bit clock signals.
 
-   The clocker attribute is useful in cases where Verilator does not
-   properly distinguish clock signals from other data signals. Using
-   clocker will cause the signal indicated to be considered a clock, and
-   remove it from the combinatorial logic reevaluation checking code. This
-   may greatly improve performance.
+   In versions prior to 5.000, the clocker attribute is useful in cases where
+   Verilator does not properly distinguish clock signals from other data
+   signals. Using clocker will cause the signal indicated to be considered a
+   clock, and remove it from the combinatorial logic reevaluation checking
+   code. This may greatly improve performance.
 
 .. option:: --no-clk <signal-name>
 
@@ -255,8 +270,8 @@ Summary:
      generally is a less-optimized binary with symbols present (so GDB can be used on it).
    * Enable debugging messages (equivalent to :vlopt:`--debugi 3 <--debugi>`).
    * Enable internal assertions (equivalent to :vlopt:`--debug-check`).
-   * Enable intermediate form dump files (equivalent to :vlopt:`--dump-treei 3
-     <--dump-treei>`).
+   * Enable intermediate form dump files (equivalent to :vlopt:`--dumpi-tree 3
+     <--dumpi-tree>`).
    * Leak to make node numbers unique (equivalent to :vlopt:`--debug-leak
      <--no-debug-leak>`.
    * Call abort() instead of exit() if there are any errors (so GDB can see
@@ -347,25 +362,31 @@ Summary:
 
        touch foo.v ; verilator -E --dump-defines foo.v
 
+.. option:: --dump-dfg
+
+   Rarely needed.  Enable dumping DfgGraph .dot debug files with dumping
+   level 3.
+
+.. option:: --dump-graph
+
+   Rarely needed.  Enable dumping V3Graph .dot debug files with dumping
+   level 3. Before Verilator 4.228, :vlopt:`--dump-tree` used
+   to include this option.
+
 .. option:: --dump-tree
 
-   Rarely needed.  Enable writing .tree debug files with dumping level 3,
+   Rarely needed.  Enable dumping Ast .tree debug files with dumping level 3,
    which dumps the standard critical stages.  For details on the format see
    the Verilator Internals manual.  :vlopt:`--dump-tree` is enabled
    automatically with :vlopt:`--debug`, so :vlopt:`--debug --no-dump-tree
    <--dump-tree>` may be useful if the dump files are large and not
    desired.
 
-.. option:: --dump-treei <level>
+.. option:: --dump-tree-dot
 
-.. option:: --dump-treei-<srcfile> <level>
-
-   Rarely needed - for developer use.  Set internal tree dumping level
-   globally to a specific dumping level or set the specified Verilator
-   source file to the specified tree dumping level (e.g.
-   :vlopt:`--dump-treei-V3Order 9 <--dump-treei>`).  Level 0 disables dumps
-   and is equivalent to :vlopt:`--no-dump-tree <--dump-tree>`.  Level 9
-   enables dumping of every stage.
+   Rarely needed.  Enable dumping Ast .tree.dot debug files in Graphviz
+   Dot format. This option implies :vlopt:`--dump-tree`, unless
+   :vlopt:`--dumpi-tree` was passed explicitly.
 
 .. option:: --dump-tree-addrids
 
@@ -375,6 +396,33 @@ Summary:
    not necessarily unique per node instance as an address might get reused
    by a newly allocated node after a node with the same address has been
    dumped then freed.
+
+.. option:: --dump-<srcfile>
+
+   Rarely needed - for developer use. Enable all dumping in the given
+   source file at level 3.
+
+.. option:: --dumpi-dfg <level>
+
+   Rarely needed - for developer use.  Set internal DfgGraph dumping level
+   globally to the specified value.
+
+.. option:: --dumpi-graph <level>
+
+   Rarely needed - for developer use.  Set internal V3Graph dumping level
+   globally to the specified value.
+
+.. option:: --dumpi-tree <level>
+
+   Rarely needed - for developer use.  Set internal Ast dumping level
+   globally to the specified value.
+
+.. option:: --dumpi-<srcfile> <level>
+
+   Rarely needed - for developer use. Set the dumping level in the
+   specified Verilator source file to the specified value (e.g.
+   `--dumpi-V3Order 9`).  Level 0 disables dumps and is equivalent to
+   `--no-dump-<srcfile>`.  Level 9 enables dumping of everything.
 
 .. option:: -E
 
@@ -453,9 +501,36 @@ Summary:
 
 .. option:: -fno-const
 
+.. options: -fno-const-before-dfg
+
+   Do not apply any global expression folding prior to the DFG pass. This
+   option is solely for the purpose of DFG testing and should not be used
+   otherwise.
+
 .. option:: -fno-const-bit-op-tree
 
 .. option:: -fno-dedup
+
+.. option:: -fno-dfg
+
+   Disable all use of the DFG based combinational logic optimizer.
+   Alias for :vlopt:`-fno-dfg-pre-inline` and :vlopt:`-fno-dfg-post-inline`.
+
+.. option:: -fno-dfg-peephole
+
+   Disable the DFG peephole optimizer.
+
+.. option:: -fno-dfg-peephole-<pattern>
+
+   Disable individual DFG peephole optimizer pattern.
+
+.. option:: -fno-dfg-pre-inline
+
+   Do not apply the DFG optimizer before inlining.
+
+.. option:: -fno-dfg-post-inline
+
+   Do not apply the DFG optimizer after inlining.
 
 .. option:: -fno-expand
 
@@ -490,6 +565,30 @@ Summary:
    Rarely needed. Disables one of the internal optimization steps. These
    are typically used only when recommended by a maintainer to help debug
    or work around an issue.
+
+.. option:: -future0 <option>
+
+   Rarely needed.  Suppress an unknown Verilator option for an option that
+   takes no additional arguments.  This is used to allow scripts written
+   with pragmas for a later version of Verilator to run under a older
+   version.  e.g. :code:`-future0 option --option` would on older versions
+   that do not understand :code:`--option` or :code:`+option` suppress what
+   would otherwise be an invalid option error, and on newer versions that
+   implement :code:`--option`, :code:`-future0 option --option` would have
+   the :code:`-future0 option` ignored and the :code:`--option` would
+   function appropriately.
+
+.. option:: -future1 <option>
+
+   Rarely needed.  Suppress an unknown Verilator option for an option that
+   takes an additional argument.  This is used to allow scripts written
+   with pragmas for a later version of Verilator to run under a older
+   version.  e.g. :code:`-future1 option --option arg` would on older
+   versions that do not understand :code:`--option arg` or :code:`+option
+   arg` suppress what would otherwise be an invalid option error, and on
+   newer versions that implement :code:`--option arg`, :code:`-future1
+   option --option arg` would have the :code:`-future1 option` ignored and
+   the :code:`--option arg` would function appropriately.
 
 .. option:: -G<name>=<value>
 
@@ -549,6 +648,15 @@ Summary:
    a newline and exit immediately. This can be useful in makefiles. See
    also :vlopt:`-V`, and the various :file:`*.mk` files.
 
+.. option:: --get-supported <feature>
+
+   If the given feature is supported, print "1" and exit
+   immediately. Otherwise, print a newline and exit immediately. This can
+   be useful in makefiles. See also :vlopt:`-V`, and the various
+   :file:`*.mk` files.
+
+   Feature may be one of the following: COROUTINES, SYSTEMC.
+
 .. option:: --help
 
    Displays this message and program version and exits.
@@ -591,11 +699,10 @@ Summary:
 
 .. option:: -j [<value>]
 
-   Specify the level of parallelism for :vlopt:`--build`. The <value> must
-   be a positive integer specifying the maximum number of parallel build
-   jobs, or can be omitted. When <value> is omitted, the build will not try
-   to limit the number of parallel build jobs but attempt to execute all
-   independent build steps in parallel.
+   Specify the level of parallelism for :vlopt:`--build` if
+   :vlopt:`--build-jobs` isn't provided. If zero, uses the number of threads
+   in the current hardware. Otherwise, the <value> must be a positive
+   integer specifying the maximum number of parallel build jobs.
 
 .. option:: --l2-name <value>
 
@@ -643,6 +750,8 @@ Summary:
    model has a time resolution that is always compatible with the time
    precision of the upper instantiating module.
 
+   Designs compiled using this option cannot use :vlopt:`--timing` with delays.
+
    See also :vlopt:`--protect-lib`.
 
 .. option:: +libext+<ext>[+<ext>][...]
@@ -684,6 +793,24 @@ Summary:
    "-a -b"``), or use multiple -MAKEFLAGS arguments
    (e.g. ``-MAKEFLAGS -l -MAKEFLAGS -k``). Use of this option should not be
    required for simple builds using the host toolchain.
+
+.. option:: --main
+
+   Generates a top-level C++ main() file that supports parsing arguments,
+   but does not drive any inputs.  This is sufficient to use for top-level
+   SystemVerilog designs that has no inputs.
+
+   This option can also be used once to generate a main .cpp file as a
+   starting point for editing.  Copy it outside the obj directory, manually
+   edit, and then pass the filename on later Verilator command line
+   invocations.
+
+   Typically used with :vlopt:`--timing` to support delay-generated clocks,
+   and :vlopt:`--build`.
+
+   Implies :vlopt:`--cc` if no other output mode was provided.
+
+   See also :vlopt:`--binary`.
 
 .. option:: --max-num-width <value>
 
@@ -745,6 +872,10 @@ Summary:
    Defaults to the :vlopt:`--prefix` if not specified.
 
 .. option:: --no-order-clock-delay
+
+   Deprecated and has no effect (ignored).
+
+   In versions prior to 5.000:
 
    Rarely needed.  Disables a bug fix for ordering of clock enables with
    delayed assignments.  This option should only be used when suggested by
@@ -948,6 +1079,8 @@ Summary:
    in the distribution for a demonstration of how to build and use the DPI
    library.
 
+   Designs compiled using this option cannot use :vlopt:`--timing` with delays.
+
 .. option:: --public
 
    This is only for historical debug use.  Using it may result in
@@ -1139,6 +1272,16 @@ Summary:
    module.  As "1fs" is the finest time precision it may be desirable to
    always use a precision of "1fs".
 
+.. option:: --timing
+
+.. option:: --no-timing
+
+   Enables/disables support for timing constructs such as delays, event
+   controls (unless it's at the top of a process), wait statements, and joins.
+   When disabled, timing control constructs are ignored the same way as they
+   were in earlier versions of Verilator. Enabling this feature requires a C++
+   compiler with coroutine support (GCC 10, Clang 5, or newer).
+
 .. option:: --top <topname>
 
 .. option:: --top-module <topname>
@@ -1302,8 +1445,7 @@ Summary:
 
    Enable all code style warnings, including code style warnings that are
    normally disabled by default. Equivalent to :vlopt:`-Wwarn-lint`
-   :vlopt:`-Wwarn-style`.  Excludes some specialty warnings,
-   i.e. IMPERFECTSCH.
+   :vlopt:`-Wwarn-style`.  Excludes some specialty warnings.
 
 .. option:: -Werror-<message>
 
@@ -1346,7 +1488,8 @@ Summary:
    equivalent to ``-Wno-ALWCOMBORDER -Wno-BSSPACE -Wno-CASEINCOMPLETE
    -Wno-CASEOVERLAP -Wno-CASEX -Wno-CASTCONST -Wno-CASEWITHX -Wno-CMPCONST -Wno-COLONPLUS
    -Wno-ENDLABEL -Wno-IMPLICIT -Wno-LITENDIAN -Wno-PINCONNECTEMPTY
-   -Wno-PINMISSING -Wno-SYNCASYNCNET -Wno-UNDRIVEN -Wno-UNSIGNED -Wno-UNUSED
+   -Wno-PINMISSING -Wno-SYNCASYNCNET -Wno-UNDRIVEN -Wno-UNSIGNED
+   -Wno-UNUSEDGENVAR -Wno-UNUSEDPARAM -Wno-UNUSEDSIGNAL
    -Wno-WIDTH`` plus the list shown for Wno-style.
 
    It is strongly recommended you cleanup your code rather than using this
@@ -1358,7 +1501,8 @@ Summary:
    Disable all code style related warning messages (note by default they are
    already disabled).  This is equivalent to ``-Wno-DECLFILENAME -Wno-DEFPARAM
    -Wno-EOFNEWLINE -Wno-IMPORTSTAR -Wno-INCABSPATH -Wno-PINCONNECTEMPTY
-   -Wno-PINNOCONNECT -Wno-SYNCASYNCNET -Wno-UNDRIVEN -Wno-UNUSED
+   -Wno-PINNOCONNECT -Wno-SYNCASYNCNET -Wno-UNDRIVEN
+   -Wno-UNUSEDGENVAR -Wno-UNUSEDPARAM -Wno-UNUSEDSIGNAL
    -Wno-VARHIDDEN``.
 
 .. option:: -Wpedantic
@@ -1387,7 +1531,7 @@ Summary:
    Enable all code style related warning messages.  This is equivalent to
    ``-Wwarn ASSIGNDLY -Wwarn-DECLFILENAME -Wwarn-DEFPARAM -Wwarn-EOFNEWLINE
    -Wwarn-INCABSPATH -Wwarn-PINNOCONNECT -Wwarn-SYNCASYNCNET -Wwarn-UNDRIVEN
-   -Wwarn-UNUSED -Wwarn-VARHIDDEN``.
+   -Wwarn-UNUSEDGENVAR -Wwarn-UNUSEDPARAM -Wwarn-UNUSEDSIGNAL -Wwarn-VARHIDDEN``.
 
 .. option:: --x-assign 0
 
@@ -1556,6 +1700,10 @@ The grammar of configuration commands is as follows:
 
 .. option:: clock_enable -module "<modulename>" -var "<signame>"
 
+   Deprecated and has no effect (ignored).
+
+   In versions prior to 5.000:
+
    Indicate the signal is used to gate a clock, and the user takes
    responsibility for insuring there are no races related to it.
 
@@ -1718,6 +1866,19 @@ The grammar of configuration commands is as follows:
    recommended by Verilator itself, see :option:`UNOPTFLAT`.
 
    Same as :option:`/*verilator&32;split_var*/` metacomment.
+
+.. option:: timing_on  [-file "<filename>" [-lines <line> [ - <line>]]]
+
+.. option:: timing_off [-file "<filename>" [-lines <line> [ - <line>]]]
+
+   Enables/disables timing constructs for the specified file and lines.
+   When disabled, all timing control constructs in the specified source
+   code locations are ignored the same way as with the
+   :option:`--no-timing`, and code:`fork`/:code:`join*` blocks are
+   converted into :code:`begin`/:code:`end` blocks.
+
+   Same as :option:`/*verilator&32;timing_on*/`,
+   :option:`/*verilator&32;timing_off*/` metacomments.
 
 .. option:: tracing_on  [-file "<filename>" [-lines <line> [ - <line> ]]]
 

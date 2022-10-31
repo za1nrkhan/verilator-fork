@@ -32,7 +32,6 @@ class EmitCConstInit VL_NOT_FINAL : public EmitCBaseVisitor {
     uint32_t m_unpackedWord = 0;
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     uint32_t tabModulus(AstNodeDType* dtypep) {
         const uint32_t elemBytes = dtypep->widthTotalBytes();
@@ -45,7 +44,7 @@ class EmitCConstInit VL_NOT_FINAL : public EmitCBaseVisitor {
 
 protected:
     // VISITORS
-    virtual void visit(AstInitArray* nodep) override {
+    void visit(AstInitArray* nodep) override {
         VL_RESTORER(m_inUnpacked);
         VL_RESTORER(m_unpackedWord);
         m_inUnpacked = true;
@@ -94,15 +93,17 @@ protected:
         }
     }
 
-    virtual void visit(AstInitItem* nodep) override {  // LCOV_EXCL_START
+    void visit(AstInitItem* nodep) override {  // LCOV_EXCL_START
         nodep->v3fatal("Handled by AstInitArray");
     }  // LCOV_EXCL_STOP
 
-    virtual void visit(AstConst* nodep) override {
+    void visit(AstConst* nodep) override {
         const V3Number& num = nodep->num();
         UASSERT_OBJ(!num.isFourState(), nodep, "4-state value in constant pool");
         const AstNodeDType* const dtypep = nodep->dtypep();
-        if (num.isString()) {
+        if (num.isNull()) {
+            puts("VlNull{}");
+        } else if (num.isString()) {
             // Note: putsQuoted does not track indentation, so we use this instead
             puts("\"");
             puts(num.toString());
@@ -145,7 +146,7 @@ protected:
     }
 
     // Default
-    virtual void visit(AstNode* nodep) override {  // LCOV_EXCL_START
+    void visit(AstNode* nodep) override {  // LCOV_EXCL_START
         nodep->v3fatalSrc("Unknown node type reached EmitCConstInit: " << nodep->prettyTypeName());
     }  // LCOV_EXCL_STOP
 };

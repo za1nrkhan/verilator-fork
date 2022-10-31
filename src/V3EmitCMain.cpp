@@ -17,12 +17,15 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
-#include "V3EmitC.h"
-#include "V3EmitCBase.h"
 #include "V3EmitCMain.h"
 
+#include "V3EmitC.h"
+#include "V3EmitCBase.h"
+#include "V3Global.h"
+
 #include <map>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 
@@ -31,7 +34,7 @@ class EmitCMain final : EmitCBaseVisitor {
 
     // VISITORS
     // This visitor doesn't really iterate, but exist to appease base class
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }  // LCOV_EXCL_LINE
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }  // LCOV_EXCL_LINE
 
 public:
     // CONSTRUCTORS
@@ -62,6 +65,7 @@ private:
         puts("// Setup context, defaults, and parse command line\n");
         puts("Verilated::debug(0);\n");
         puts("const std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};\n");
+        if (v3Global.opt.trace()) puts("contextp->traceEverOn(true);\n");
         puts("contextp->commandArgs(argc, argv);\n");
         puts("\n");
 
@@ -70,16 +74,17 @@ private:
              + "{contextp.get()}};\n");
         puts("\n");
 
-        puts("// Evaluate initials\n");
-        puts("topp->eval();  // Evaluate\n");
-        puts("\n");
-
         puts("// Simulate until $finish\n");
         puts("while (!contextp->gotFinish()) {\n");
         puts(/**/ "// Evaluate model\n");
         puts(/**/ "topp->eval();\n");
         puts(/**/ "// Advance time\n");
-        puts(/**/ "contextp->timeInc(1);\n");
+        if (v3Global.rootp()->delaySchedulerp()) {
+            puts("if (!topp->eventsPending()) break;\n");
+            puts("contextp->time(topp->nextTimeSlot());\n");
+        } else {
+            puts("contextp->timeInc(1);\n");
+        }
 
         puts("}\n");
         puts("\n");

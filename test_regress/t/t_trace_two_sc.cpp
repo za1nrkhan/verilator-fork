@@ -21,6 +21,7 @@
 
 // General headers
 #include "verilated.h"
+
 #include "systemc.h"
 
 VM_PREFIX* ap;
@@ -33,8 +34,8 @@ int sc_main(int argc, char** argv) {
     Verilated::traceEverOn(true);
     Verilated::debug(0);
     srand48(5);
-    ap = new VM_PREFIX("topa");
-    bp = new Vt_trace_two_b("topb");
+    ap = new VM_PREFIX{"topa"};
+    bp = new Vt_trace_two_b{"topb"};
     ap->clk(clk);
     bp->clk(clk);
 

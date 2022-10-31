@@ -27,15 +27,18 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
-#include "V3PartitionGraph.h"
-#include "V3GraphPathChecker.h"
 #include "V3LifePost.h"
-#include "V3Stats.h"
+
 #include "V3Ast.h"
+#include "V3Global.h"
+#include "V3GraphPathChecker.h"
+#include "V3PartitionGraph.h"
+#include "V3Stats.h"
 
 #include <memory>  // for std::unique_ptr -> auto_ptr or unique_ptr
 #include <unordered_map>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // LifePost class functions
@@ -49,25 +52,23 @@ private:
     //  AstVarScope::user4p()   -> AstVarScope*, If set, replace this
     //                             varscope with specified new one
     // STATE
-    // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     // VISITORS
-    virtual void visit(AstVarRef* nodep) override {
+    void visit(AstVarRef* nodep) override {
         const AstVarScope* const vscp = nodep->varScopep();
         UASSERT_OBJ(vscp, nodep, "Scope not assigned");
         if (AstVarScope* const newvscp = reinterpret_cast<AstVarScope*>(vscp->user4p())) {
             UINFO(9, "  Replace " << nodep << " to " << newvscp << endl);
-            AstVarRef* const newrefp = new AstVarRef(nodep->fileline(), newvscp, nodep->access());
+            AstVarRef* const newrefp = new AstVarRef{nodep->fileline(), newvscp, nodep->access()};
             nodep->replaceWith(newrefp);
             VL_DO_DANGLING(nodep->deleteTree(), nodep);
         }
     }
-    virtual void visit(AstNodeModule* nodep) override {
+    void visit(AstNodeModule* nodep) override {
         // Only track the top scopes, not lower level functions
         if (nodep->isTop()) iterateChildren(nodep);
     }
-    virtual void visit(AstNodeCCall* nodep) override {
+    void visit(AstNodeCCall* nodep) override {
         iterateChildren(nodep);
         if (!nodep->funcp()->entryPoint()) {
             // Enter the function and trace it
@@ -75,23 +76,23 @@ private:
             iterate(nodep->funcp());
         }
     }
-    virtual void visit(AstExecGraph* nodep) override {
+    void visit(AstExecGraph* nodep) override {
         // Can just iterate across the MTask bodies in any order.  Order
         // isn't important for LifePostElimVisitor's simple substitution.
         iterateChildren(nodep);
     }
-    virtual void visit(AstCFunc* nodep) override {
+    void visit(AstCFunc* nodep) override {
         if (!m_tracingCall && !nodep->entryPoint()) return;
         m_tracingCall = false;
         iterateChildren(nodep);
     }
-    virtual void visit(AstVar*) override {}  // Don't want varrefs under it
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstVar*) override {}  // Don't want varrefs under it
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTORS
     explicit LifePostElimVisitor(AstTopScope* nodep) { iterate(nodep); }
-    virtual ~LifePostElimVisitor() override = default;
+    ~LifePostElimVisitor() override = default;
 };
 
 //######################################################################
@@ -131,8 +132,8 @@ struct LifePostLocation {
 class LifePostDlyVisitor final : public VNVisitor {
 private:
     // NODE STATE
-    // Cleared on entire tree
-    //  AstVarScope::user4()    -> AstVarScope*: Passed to LifePostElim to substitute this var
+    // AstVarScope::user1()    -> bool: referenced outside _eval__nba
+    // AstVarScope::user4()    -> AstVarScope*: Passed to LifePostElim to substitute this var
     const VNUser4InUse m_inuser4;
 
     // STATE
@@ -155,9 +156,10 @@ private:
     const V3Graph* m_mtasksGraphp = nullptr;  // Mtask tracking graph
     std::unique_ptr<GraphPathChecker> m_checker;
 
-    // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
+    const AstCFunc* const m_evalNbap;  // The _eval__nba function
+    bool m_inEvalNba = false;  // Traversing under _eval__nba
 
+    // METHODS
     bool before(const LifeLocation& a, const LifeLocation& b) {
         if (a.mtaskp == b.mtaskp) return a.sequence < b.sequence;
         return m_checker->pathExistsFrom(a.mtaskp, b.mtaskp);
@@ -185,8 +187,11 @@ private:
         return true;
     }
     void squashAssignposts() {
-        for (auto& itr : m_assignposts) {
-            const LifePostLocation* const app = &itr.second;
+        for (auto& pair : m_assignposts) {
+            // If referenced external to _eval__nba, don't optimize
+            if (pair.first->user1()) continue;
+
+            const LifePostLocation* const app = &pair.second;
             const AstVarRef* const lhsp = VN_AS(app->nodep->lhsp(), VarRef);  // original var
             const AstVarRef* const rhsp = VN_AS(app->nodep->rhsp(), VarRef);  // dly var
             AstVarScope* const dlyVarp = rhsp->varScopep();
@@ -249,7 +254,7 @@ private:
     }
 
     // VISITORS
-    virtual void visit(AstTopScope* nodep) override {
+    void visit(AstTopScope* nodep) override {
         AstNode::user4ClearTree();  // user4p() used on entire tree
 
         // First, build maps of every location (mtask and sequence
@@ -273,7 +278,13 @@ private:
         // Replace any node4p varscopes with the new scope
         LifePostElimVisitor{nodep};
     }
-    virtual void visit(AstVarRef* nodep) override {
+    void visit(AstVarRef* nodep) override {
+        // Mark variables referenced outside _eval__nba
+        if (!m_inEvalNba) {
+            nodep->varScopep()->user1(true);
+            return;
+        }
+
         // Consumption/generation of a variable,
         const AstVarScope* const vscp = nodep->varScopep();
         UASSERT_OBJ(vscp, nodep, "Scope not assigned");
@@ -282,14 +293,15 @@ private:
         if (nodep->access().isWriteOrRW()) m_writes[vscp].insert(loc);
         if (nodep->access().isReadOrRW()) m_reads[vscp].insert(loc);
     }
-    virtual void visit(AstAssignPre* nodep) override {
+    void visit(AstAssignPre* nodep) override {
         // Do not record varrefs within assign pre.
         //
         // The pre-assignment into the dly var should not count as its
         // first write; we only want to consider reads and writes that
         // would still happen if the dly var were eliminated.
+        if (!m_inEvalNba) iterateChildren(nodep);
     }
-    virtual void visit(AstAssignPost* nodep) override {
+    void visit(AstAssignPost* nodep) override {
         // Don't record ASSIGNPOST in the read/write maps, record them in a
         // separate map
         if (const AstVarRef* const rhsp = VN_CAST(nodep->rhsp(), VarRef)) {
@@ -301,11 +313,11 @@ private:
             m_assignposts[dlyVarp] = LifePostLocation(loc, nodep);
         }
     }
-    virtual void visit(AstNodeModule* nodep) override {
+    void visit(AstNodeModule* nodep) override {
         // Only track the top scopes, not lower level functions
         if (nodep->isTop()) iterateChildren(nodep);
     }
-    virtual void visit(AstNodeCCall* nodep) override {
+    void visit(AstNodeCCall* nodep) override {
         iterateChildren(nodep);
         if (!nodep->funcp()->entryPoint()) {
             // Enter the function and trace it
@@ -313,11 +325,13 @@ private:
             iterate(nodep->funcp());
         }
     }
-    virtual void visit(AstExecGraph* nodep) override {
+    void visit(AstExecGraph* nodep) override {
         // Treat the ExecGraph like a call to each mtask body
-        UASSERT_OBJ(!m_mtasksGraphp, nodep, "Cannot handle more than one AstExecGraph");
-        m_mtasksGraphp = nodep->depGraphp();
-        for (V3GraphVertex* mtaskVxp = m_mtasksGraphp->verticesBeginp(); mtaskVxp;
+        if (m_inEvalNba) {
+            UASSERT_OBJ(!m_mtasksGraphp, nodep, "Cannot handle more than one AstExecGraph");
+            m_mtasksGraphp = nodep->depGraphp();
+        }
+        for (V3GraphVertex* mtaskVxp = nodep->depGraphp()->verticesBeginp(); mtaskVxp;
              mtaskVxp = mtaskVxp->verticesNextp()) {
             const ExecMTask* const mtaskp = dynamic_cast<ExecMTask*>(mtaskVxp);
             m_execMTaskp = mtaskp;
@@ -326,19 +340,24 @@ private:
         }
         m_execMTaskp = nullptr;
     }
-    virtual void visit(AstCFunc* nodep) override {
+    void visit(AstCFunc* nodep) override {
         if (!m_tracingCall && !nodep->entryPoint()) return;
+        VL_RESTORER(m_inEvalNba);
+        if (nodep == m_evalNbap) m_inEvalNba = true;
         m_tracingCall = false;
         iterateChildren(nodep);
     }
     //-----
-    virtual void visit(AstVar*) override {}  // Don't want varrefs under it
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstVar*) override {}  // Don't want varrefs under it
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTORS
-    explicit LifePostDlyVisitor(AstNetlist* nodep) { iterate(nodep); }
-    virtual ~LifePostDlyVisitor() override {
+    explicit LifePostDlyVisitor(AstNetlist* netlistp)
+        : m_evalNbap{netlistp->evalNbap()} {
+        iterate(netlistp);
+    }
+    ~LifePostDlyVisitor() override {
         V3Stats::addStat("Optimizations, Lifetime postassign deletions", m_statAssnDel);
     }
 };
@@ -350,5 +369,5 @@ void V3LifePost::lifepostAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     // Mark redundant AssignPost
     { LifePostDlyVisitor{nodep}; }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("life_post", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 3);
+    V3Global::dumpCheckGlobalTree("life_post", 0, dumpTree() >= 3);
 }

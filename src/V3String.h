@@ -33,7 +33,8 @@
 //######################################################################
 // Global string-related functions
 
-template <class T> std::string cvtToStr(const T& t) {
+template <class T>
+std::string cvtToStr(const T& t) {
     std::ostringstream os;
     os << t;
     return os.str();
@@ -115,6 +116,8 @@ public:
     static string replaceWord(const string& str, const string& from, const string& to);
     // Predicate to check if 'str' starts with 'prefix'
     static bool startsWith(const string& str, const string& prefix);
+    // Predicate to check if 'str' ends with 'suffix'
+    static bool endsWith(const string& str, const string& suffix);
 };
 
 //######################################################################
@@ -232,7 +235,7 @@ public:
         if (candidate.empty()) {
             return "";
         } else {
-            return string("... Suggested alternative: '") + candidate + "'";
+            return std::string{"... Suggested alternative: '"} + candidate + "'";
         }
     }
     static void selfTest();

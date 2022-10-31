@@ -20,8 +20,8 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "VlcPoint.h"
 #include "VlcBucket.h"
+#include "VlcPoint.h"
 
 #include <map>
 #include <vector>
@@ -92,6 +92,8 @@ public:
 private:
     // MEMBERS
     ByName m_tests;  //< List of all tests
+
+    static int debug() { return V3Error::debugDefault(); }
 
 public:
     // ITERATORS

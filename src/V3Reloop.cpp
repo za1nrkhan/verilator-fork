@@ -32,12 +32,15 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3Reloop.h"
-#include "V3Stats.h"
+
 #include "V3Ast.h"
+#include "V3Global.h"
+#include "V3Stats.h"
 
 #include <algorithm>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 
@@ -65,13 +68,12 @@ private:
     uint32_t m_mgIndexHi = 0;  // Merge range
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
-    AstVar* findCreateVarTemp(FileLine* fl, AstCFunc* cfuncp) {
+    static AstVar* findCreateVarTemp(FileLine* fl, AstCFunc* cfuncp) {
         AstVar* varp = VN_AS(cfuncp->user1p(), Var);
         if (!varp) {
-            const string newvarname = string("__Vilp");
-            varp = new AstVar(fl, VVarType::STMTTEMP, newvarname, VFlagLogicPacked(), 32);
+            const string newvarname{"__Vilp"};
+            varp = new AstVar{fl, VVarType::STMTTEMP, newvarname, VFlagLogicPacked{}, 32};
             UASSERT_OBJ(cfuncp, fl, "Assignment not under a function");
             cfuncp->addInitsp(varp);
             cfuncp->user1p(varp);
@@ -113,7 +115,7 @@ private:
                 AstWhile* const whilep = new AstWhile(fl, condp, nullptr, incp);
                 initp->addNext(whilep);
                 bodyp->replaceWith(initp);
-                whilep->addBodysp(bodyp);
+                whilep->addStmtsp(bodyp);
 
                 // Replace constant index with new loop index
                 AstNode* const offsetp
@@ -150,7 +152,7 @@ private:
     }
 
     // VISITORS
-    virtual void visit(AstCFunc* nodep) override {
+    void visit(AstCFunc* nodep) override {
         VL_RESTORER(m_cfuncp);
         {
             m_cfuncp = nodep;
@@ -158,7 +160,7 @@ private:
             mergeEnd();  // Finish last pending merge, if any
         }
     }
-    virtual void visit(AstNodeAssign* nodep) override {
+    void visit(AstNodeAssign* nodep) override {
         if (!m_cfuncp) return;
 
         // Left select WordSel or ArraySel
@@ -249,14 +251,14 @@ private:
         UINFO(9, "Start merge i=" << lindex << " o=" << m_mgOffset << nodep << endl);
     }
     //--------------------
-    virtual void visit(AstVar*) override {}  // Accelerate
-    virtual void visit(AstNodeMath*) override {}  // Accelerate
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstVar*) override {}  // Accelerate
+    void visit(AstNodeMath*) override {}  // Accelerate
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTORS
     explicit ReloopVisitor(AstNetlist* nodep) { iterate(nodep); }
-    virtual ~ReloopVisitor() override {
+    ~ReloopVisitor() override {
         V3Stats::addStat("Optimizations, Reloops", m_statReloops);
         V3Stats::addStat("Optimizations, Reloop iterations", m_statReItems);
     }
@@ -268,5 +270,5 @@ public:
 void V3Reloop::reloopAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { ReloopVisitor{nodep}; }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("reloop", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 6);
+    V3Global::dumpCheckGlobalTree("reloop", 0, dumpTree() >= 6);
 }

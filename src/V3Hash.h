@@ -17,6 +17,8 @@
 #ifndef VERILATOR_V3HASH_H_
 #define VERILATOR_V3HASH_H_
 
+#include "verilatedos.h"
+
 #include <cstdint>
 #include <string>
 
@@ -26,7 +28,7 @@
 class V3Hash final {
     uint32_t m_value;  // The 32-bit hash value.
 
-    inline static uint32_t combine(uint32_t a, uint32_t b) {
+    static uint32_t combine(uint32_t a, uint32_t b) {
         return a ^ (b + 0x9e3779b9 + (a << 6) + (a >> 2));
     }
 
@@ -45,8 +47,8 @@ public:
     explicit V3Hash(const std::string& val);
 
     // METHODS
-    uint32_t value() const { return m_value; }
-    std::string toString() const;
+    uint32_t value() const VL_MT_SAFE { return m_value; }
+    std::string toString() const VL_MT_SAFE;
 
     // OPERATORS
     // Comparisons
@@ -55,14 +57,23 @@ public:
     bool operator<(const V3Hash& rh) const { return m_value < rh.m_value; }
 
     // '+' combines hashes
-    template <class T> V3Hash operator+(T that) const {
+    template <class T>
+    V3Hash operator+(T that) const {
         return V3Hash(combine(m_value, V3Hash(that).m_value));
     }
 
     // '+=' combines in place
-    template <class T> V3Hash& operator+=(T that) { return *this = *this + that; }
+    template <class T>
+    V3Hash& operator+=(T that) {
+        return *this = *this + that;
+    }
 };
 
 std::ostream& operator<<(std::ostream& os, const V3Hash& rhs);
+
+template <>
+struct std::hash<V3Hash> {
+    std::size_t operator()(const V3Hash& h) const noexcept { return h.value(); }
+};
 
 #endif  // Guard

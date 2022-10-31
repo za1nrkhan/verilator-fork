@@ -29,8 +29,13 @@
 #include "verilatedos.h"
 
 // Limited V3 headers here - this is a base class for Vlc etc
-#include "V3String.h"
 #include "V3Os.h"
+#include "V3String.h"
+
+#ifndef V3ERROR_NO_GLOBAL_
+#include "V3Global.h"
+VL_DEFINE_DEBUG_FUNCTIONS;
+#endif
 
 #include <cerrno>
 #include <climits>  // PATH_MAX (especially on FreeBSD)
@@ -38,6 +43,7 @@
 #include <dirent.h>
 #include <fstream>
 #include <memory>
+
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -199,7 +205,7 @@ string V3Os::filenameRealPath(const string& filename) {
         realpath(filename.c_str(), retpath)
 #endif
     ) {
-        return string(retpath);
+        return std::string{retpath};
     } else {
         return filename;
     }
@@ -239,7 +245,7 @@ void V3Os::unlinkRegexp(const string& dir, const string& regexp) {
     if (DIR* const dirp = opendir(dir.c_str())) {
         while (struct dirent* const direntp = readdir(dirp)) {
             if (VString::wildmatch(direntp->d_name, regexp.c_str())) {
-                const string fullname = dir + "/" + string(direntp->d_name);
+                const string fullname = dir + "/" + std::string{direntp->d_name};
 #if defined(_WIN32) || defined(__MINGW32__)
                 _unlink(fullname.c_str());
 #else
@@ -347,7 +353,7 @@ int V3Os::system(const string& command) {
     const int ret = ::system(command.c_str());
     if (VL_UNCOVERABLE(ret == -1)) {
         v3fatal("Failed to execute command:"  // LCOV_EXCL_LINE
-                << command << " " << strerror(errno));
+                << command << " " << std::strerror(errno));
         return -1;  // LCOV_EXCL_LINE
     } else {
         UASSERT(WIFEXITED(ret), "system(" << command << ") returned unexpected value of " << ret);

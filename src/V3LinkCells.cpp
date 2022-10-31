@@ -26,17 +26,20 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3LinkCells.h"
-#include "V3SymTable.h"
-#include "V3Parse.h"
+
 #include "V3Ast.h"
+#include "V3Global.h"
 #include "V3Graph.h"
+#include "V3Parse.h"
+#include "V3SymTable.h"
 
 #include <algorithm>
 #include <map>
-#include <vector>
 #include <unordered_set>
+#include <vector>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Graph subclasses
@@ -44,8 +47,8 @@
 class LinkCellsGraph final : public V3Graph {
 public:
     LinkCellsGraph() = default;
-    virtual ~LinkCellsGraph() override = default;
-    virtual void loopsMessageCb(V3GraphVertex* vertexp) override;
+    ~LinkCellsGraph() override = default;
+    void loopsMessageCb(V3GraphVertex* vertexp) override;
 };
 
 class LinkCellsVertex final : public V3GraphVertex {
@@ -55,12 +58,12 @@ public:
     LinkCellsVertex(V3Graph* graphp, AstNodeModule* modp)
         : V3GraphVertex{graphp}
         , m_modp{modp} {}
-    virtual ~LinkCellsVertex() override = default;
+    ~LinkCellsVertex() override = default;
     AstNodeModule* modp() const { return m_modp; }
-    virtual string name() const override { return modp()->name(); }
-    virtual FileLine* fileline() const override { return modp()->fileline(); }
+    string name() const override { return modp()->name(); }
+    FileLine* fileline() const override { return modp()->fileline(); }
     // Recursive modules get space for maximum recursion
-    virtual uint32_t rankAdder() const override {
+    uint32_t rankAdder() const override {
         return m_modp->recursiveClone() ? (1 + v3Global.opt.moduleRecursionDepth()) : 1;
     }
 };
@@ -69,8 +72,8 @@ class LibraryVertex final : public V3GraphVertex {
 public:
     explicit LibraryVertex(V3Graph* graphp)
         : V3GraphVertex{graphp} {}
-    virtual ~LibraryVertex() override = default;
-    virtual string name() const override { return "*LIBRARY*"; }
+    ~LibraryVertex() override = default;
+    string name() const override { return "*LIBRARY*"; }
 };
 
 void LinkCellsGraph::loopsMessageCb(V3GraphVertex* vertexp) {
@@ -117,8 +120,6 @@ private:
     std::unordered_set<string> m_declfnWarned;  // Files we issued DECLFILENAME on
     string m_origTopModuleName;  // original name of the top module
 
-    VL_DEBUG_FUNC;  // Declare debug()
-
     // METHODS
     V3GraphVertex* vertex(AstNodeModule* nodep) {
         // Return corresponding vertex for this module
@@ -160,13 +161,13 @@ private:
     }
 
     // VISITs
-    virtual void visit(AstNetlist* nodep) override {
+    void visit(AstNetlist* nodep) override {
         AstNode::user1ClearTree();
         readModNames();
         iterateChildren(nodep);
         // Find levels in graph
         m_graph.removeRedundantEdges(&V3GraphEdge::followAlwaysTrue);
-        m_graph.dumpDotFilePrefixed("linkcells");
+        if (dumpGraph()) m_graph.dumpDotFilePrefixed("linkcells");
         m_graph.rank();
         for (V3GraphVertex* itp = m_graph.verticesBeginp(); itp; itp = itp->verticesNextp()) {
             if (const LinkCellsVertex* const vvertexp = dynamic_cast<LinkCellsVertex*>(itp)) {
@@ -180,8 +181,8 @@ private:
                                                << "' was not found in design.");
         }
     }
-    virtual void visit(AstConstPool* nodep) override {}
-    virtual void visit(AstNodeModule* nodep) override {
+    void visit(AstConstPool* nodep) override {}
+    void visit(AstNodeModule* nodep) override {
         // Module: Pick up modnames, so we can resolve cells later
         VL_RESTORER(m_modp);
         {
@@ -226,7 +227,7 @@ private:
         }
     }
 
-    virtual void visit(AstIfaceRefDType* nodep) override {
+    void visit(AstIfaceRefDType* nodep) override {
         // Cell: Resolve its filename.  If necessary, parse it.
         UINFO(4, "Link IfaceRef: " << nodep << endl);
         // Use findIdUpward instead of findIdFlat; it doesn't matter for now
@@ -245,14 +246,14 @@ private:
         // Note cannot do modport resolution here; modports are allowed underneath generates
     }
 
-    virtual void visit(AstPackageImport* nodep) override {
+    void visit(AstPackageImport* nodep) override {
         // Package Import: We need to do the package before the use of a package
         iterateChildren(nodep);
         UASSERT_OBJ(nodep->packagep(), nodep, "Unlinked package");  // Parser should set packagep
         new V3GraphEdge(&m_graph, vertex(m_modp), vertex(nodep->packagep()), 1, false);
     }
 
-    virtual void visit(AstBind* nodep) override {
+    void visit(AstBind* nodep) override {
         // Bind: Has cells underneath that need to be put into the new
         // module, and cells which need resolution
         // TODO this doesn't allow bind to dotted hier names, that would require
@@ -267,14 +268,14 @@ private:
             {
                 m_modp = modp;
                 // Important that this adds to end, as next iterate assumes does all cells
-                modp->addStmtp(cellsp);
+                modp->addStmtsp(cellsp);
                 iterateAndNextNull(cellsp);
             }
         }
         pushDeletep(nodep->unlinkFrBack());
     }
 
-    virtual void visit(AstCell* nodep) override {
+    void visit(AstCell* nodep) override {
         // Cell: Resolve its filename.  If necessary, parse it.
         // Execute only once.  Complication is that cloning may result in
         // user1 being set (for pre-clone) so check if user1() matches the
@@ -320,7 +321,7 @@ private:
                             otherModp->recursiveClone(true);
                             // user1 etc will retain its pre-clone value
                             cellmodp->user2p(otherModp);
-                            v3Global.rootp()->addModulep(otherModp);
+                            v3Global.rootp()->addModulesp(otherModp);
                             new V3GraphEdge(&m_graph, vertex(cellmodp), vertex(otherModp), 1,
                                             false);
                         }
@@ -354,7 +355,7 @@ private:
         for (AstPin *nextp, *pinp = nodep->pinsp(); pinp; pinp = nextp) {
             nextp = VN_AS(pinp->nextp(), Pin);
             if (pinp->dotStar()) {
-                if (pinStar) pinp->v3error("Duplicate .* in an instance");
+                if (pinStar) pinp->v3error("Duplicate .* in an instance (IEEE 1800-2017 23.3.2)");
                 pinStar = true;
                 // Done with this fake pin
                 VL_DO_DANGLING(pinp->unlinkFrBack()->deleteTree(), pinp);
@@ -373,8 +374,10 @@ private:
             // Note what pins exist
             std::unordered_set<string> ports;  // Symbol table of all connected port names
             for (AstPin* pinp = nodep->pinsp(); pinp; pinp = VN_AS(pinp->nextp(), Pin)) {
-                if (pinp->name() == "")
-                    pinp->v3error("Connect by position is illegal in .* connected instances");
+                if (pinStar && pinp->name().substr(0, 11) == "__pinNumber") {
+                    pinp->v3error("Connect by position is illegal in .* connected instances"
+                                  " (IEEE 1800-2017 23.3.2)");
+                }
                 if (!pinp->exprp()) {
                     if (pinp->name().substr(0, 11) == "__pinNumber") {
                         pinp->v3warn(PINNOCONNECT,
@@ -451,14 +454,14 @@ private:
         UINFO(4, " Link Cell done: " << nodep << endl);
     }
 
-    virtual void visit(AstRefDType* nodep) override {
+    void visit(AstRefDType* nodep) override {
         iterateChildren(nodep);
         for (AstPin* pinp = nodep->paramsp(); pinp; pinp = VN_AS(pinp->nextp(), Pin)) {
             pinp->param(true);
             if (pinp->name() == "") pinp->name("__paramNumber" + cvtToStr(pinp->pinNum()));
         }
     }
-    virtual void visit(AstClassOrPackageRef* nodep) override {
+    void visit(AstClassOrPackageRef* nodep) override {
         iterateChildren(nodep);
         // Inside a class, an extends or reference to another class
         // Note we don't add a V3GraphEdge{vertex(m_modp), vertex(nodep->classOrPackagep()}
@@ -470,17 +473,14 @@ private:
         }
     }
 
-    // Accelerate the recursion
-    // Must do statements to support Generates, math though...
-    virtual void visit(AstNodeMath*) override {}
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
     // METHODS
     void readModNames() {
         // mangled_name, BlockOptions
         const V3HierBlockOptSet& hierBlocks = v3Global.opt.hierBlocks();
         const auto hierIt = vlstd::as_const(hierBlocks).find(v3Global.opt.topModule());
-        UASSERT((hierIt != hierBlocks.end()) == v3Global.opt.hierChild(),
+        UASSERT((hierIt != hierBlocks.end()) == !!v3Global.opt.hierChild(),
                 "information of the top module must exist if --hierarchical-child is set");
         // Look at all modules, and store pointers to all module names
         for (AstNodeModule *nextp, *nodep = v3Global.rootp()->modulesp(); nodep; nodep = nextp) {
@@ -530,7 +530,7 @@ public:
         }
         iterate(nodep);
     }
-    virtual ~LinkCellsVisitor() override = default;
+    ~LinkCellsVisitor() override = default;
 };
 
 //######################################################################

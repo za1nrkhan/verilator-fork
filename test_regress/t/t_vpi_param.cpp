@@ -12,18 +12,18 @@
 #ifdef IS_VPI
 
 #include "vpi_user.h"
+
 #include <cstdlib>
 
 #else
 
-#include "Vt_vpi_param.h"
 #include "verilated.h"
-#include "svdpi.h"
-
-#include "Vt_vpi_param__Dpi.h"
-
-#include "verilated_vpi.h"
 #include "verilated_vcd_c.h"
+#include "verilated_vpi.h"
+
+#include "Vt_vpi_param.h"
+#include "Vt_vpi_param__Dpi.h"
+#include "svdpi.h"
 
 #endif
 
@@ -31,6 +31,7 @@
 #include <cstring>
 #include <iostream>
 
+// These require the above. Comment prevents clang-format moving them
 #include "TestSimulator.h"
 #include "TestVpi.h"
 
@@ -70,7 +71,7 @@
     }
 
 #define CHECK_RESULT_CSTR(got, exp) \
-    if (strcmp((got), (exp))) { \
+    if (std::strcmp((got), (exp))) { \
         printf("%%Error: %s:%d: GOT = '%s'   EXP = '%s'\n", FILENM, __LINE__, \
                (got) ? (got) : "<null>", (exp) ? (exp) : "<null>"); \
         return __LINE__; \
@@ -100,7 +101,7 @@ int check_param_int(std::string name, PLI_INT32 format, int exp_value, bool verb
     p = vpi_get_str(vpiName, param_h);
     CHECK_RESULT_CSTR(p, name.c_str());
     p = vpi_get_str(vpiFullName, param_h);
-    CHECK_RESULT_CSTR(p, std::string("t." + name).c_str());
+    CHECK_RESULT_CSTR(p, std::string{"t." + name}.c_str());
     p = vpi_get_str(vpiType, param_h);
     CHECK_RESULT_CSTR(p, "vpiParameter");
     vpi_type = vpi_get(vpiLocalParam, param_h);
@@ -154,7 +155,7 @@ int check_param_str(std::string name, PLI_INT32 format, std::string exp_value, b
     p = vpi_get_str(vpiName, param_h);
     CHECK_RESULT_CSTR(p, name.c_str());
     p = vpi_get_str(vpiFullName, param_h);
-    CHECK_RESULT_CSTR(p, std::string("t." + name).c_str());
+    CHECK_RESULT_CSTR(p, std::string{"t." + name}.c_str());
     p = vpi_get_str(vpiType, param_h);
     CHECK_RESULT_CSTR(p, "vpiParameter");
     vpi_type = vpi_get(vpiLocalParam, param_h);

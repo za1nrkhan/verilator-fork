@@ -17,14 +17,17 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3GraphAlg.h"
+
+#include "V3Global.h"
 #include "V3GraphPathChecker.h"
 
 #include <algorithm>
-#include <vector>
-#include <map>
 #include <list>
+#include <map>
+#include <vector>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 //######################################################################
@@ -119,7 +122,6 @@ public:
     }
 
 private:
-    VL_DEBUG_FUNC;  // Declare debug()
     VL_UNCOPYABLE(GraphAlgRemoveTransitiveEdges);
 };
 
@@ -176,7 +178,10 @@ private:
     std::vector<V3GraphVertex*> m_callTrace;  // List of everything we hit processing so far
 
     void main() {
-        // Use Tarjan's algorithm to find the strongly connected subgraphs.
+        // Use Pearce's algorithm to color the strongly connected components. For reference see
+        // "An Improved Algorithm for Finding the Strongly Connected Components of a Directed
+        // Graph", David J.Pearce, 2005
+        //
         // Node State:
         //     Vertex::user     // DFS number indicating possible root of subtree, 0=not iterated
         //     Vertex::color    // Output subtree number (fully processed)

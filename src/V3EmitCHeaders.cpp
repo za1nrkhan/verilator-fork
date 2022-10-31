@@ -17,19 +17,20 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3EmitC.h"
 #include "V3EmitCConstInit.h"
+#include "V3Global.h"
 
 #include <algorithm>
 #include <vector>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Internal EmitC implementation
 
 class EmitCHeader final : public EmitCConstInit {
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     void decorateFirst(bool& first, const string& str) {
         if (first) {
@@ -236,10 +237,11 @@ class EmitCHeader final : public EmitCConstInit {
     void emitAll(const AstNodeModule* modp) {
         // Include files required by this AstNodeModule
         if (const AstClass* const classp = VN_CAST(modp, Class)) {
-            if (classp->extendsp())
+            if (classp->extendsp()) {
                 puts("#include \""
                      + prefixNameProtect(classp->extendsp()->classp()->classOrPackagep())
                      + ".h\"\n");
+            }
         }
         emitModCUse(modp, VUseType::INT_INCLUDE);
 
@@ -251,15 +253,17 @@ class EmitCHeader final : public EmitCConstInit {
         emitTextSection(modp, VNType::atScHdr);
 
         // Open class body {{{
+        puts("\nclass ");
+        puts(prefixNameProtect(modp));
         if (const AstClass* const classp = VN_CAST(modp, Class)) {
-            puts("class ");
-            puts(prefixNameProtect(modp));
+            puts(" : public ");
             if (classp->extendsp()) {
-                puts(" : public ");
                 puts(prefixNameProtect(classp->extendsp()->classp()));
+            } else {
+                puts("VlClass");
             }
         } else {
-            puts("VL_MODULE(" + prefixNameProtect(modp) + ")");
+            puts(" final : public VerilatedModule");
         }
         puts(" {\n");
         ofp()->resetPrivate();
@@ -312,6 +316,7 @@ class EmitCHeader final : public EmitCConstInit {
         if (v3Global.opt.mtasks()) puts("#include \"verilated_threads.h\"\n");
         if (v3Global.opt.savable()) puts("#include \"verilated_save.h\"\n");
         if (v3Global.opt.coverage()) puts("#include \"verilated_cov.h\"\n");
+        if (v3Global.usesTiming()) puts("#include \"verilated_timing.h\"\n");
 
         emitAll(modp);
 
@@ -325,7 +330,7 @@ class EmitCHeader final : public EmitCConstInit {
         // Close output file
         VL_DO_CLEAR(delete m_ofp, m_ofp = nullptr);
     }
-    virtual ~EmitCHeader() override = default;
+    ~EmitCHeader() override = default;
 
 public:
     static void main(const AstNodeModule* modp) { EmitCHeader emitCHeader(modp); }

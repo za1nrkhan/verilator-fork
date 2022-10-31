@@ -24,6 +24,7 @@
 #define VERILATOR_VERILATED_THREADS_H_
 
 #include "verilatedos.h"
+
 #include "verilated.h"  // for VerilatedMutex and clang annotations
 
 #ifndef VL_THREADED
@@ -59,9 +60,6 @@ class VlThreadPool;
 using VlSelfP = void*;
 
 using VlExecFnp = void (*)(VlSelfP, bool);
-
-// VlWorkerThread::startWorker callback, used to hook in VlExecutionProfiler
-using VlStartWorkerCb = void (*)(VlExecutionProfiler*, uint32_t threadId);
 
 // Track dependencies for a single MTask.
 class VlMTaskVertex final {
@@ -105,7 +103,7 @@ public:
     // Upstream mtasks must call this when they complete.
     // Returns true when the current MTaskVertex becomes ready to execute,
     // false while it's still waiting on more dependencies.
-    inline bool signalUpstreamDone(bool evenCycle) {
+    bool signalUpstreamDone(bool evenCycle) {
         if (evenCycle) {
             const uint32_t upstreamDepsDone
                 = 1 + m_upstreamDepsDone.fetch_add(1, std::memory_order_release);
@@ -118,11 +116,11 @@ public:
             return (upstreamDepsDone_prev == 1);
         }
     }
-    inline bool areUpstreamDepsDone(bool evenCycle) const {
+    bool areUpstreamDepsDone(bool evenCycle) const {
         const uint32_t target = evenCycle ? m_upstreamDepCount : 0;
         return m_upstreamDepsDone.load(std::memory_order_acquire) == target;
     }
-    inline void waitUntilUpstreamDone(bool evenCycle) const {
+    void waitUntilUpstreamDone(bool evenCycle) const {
         unsigned ct = 0;
         while (VL_UNLIKELY(!areUpstreamDepsDone(evenCycle))) {
             VL_CPU_RELAX();
@@ -139,13 +137,10 @@ class VlWorkerThread final {
 private:
     // TYPES
     struct ExecRec {
-        VlExecFnp m_fnp;  // Function to execute
-        VlSelfP m_selfp;  // Symbol table to execute
-        bool m_evenCycle;  // Even/odd for flag alternation
-        ExecRec()
-            : m_fnp{nullptr}
-            , m_selfp{nullptr}
-            , m_evenCycle{false} {}
+        VlExecFnp m_fnp = nullptr;  // Function to execute
+        VlSelfP m_selfp = nullptr;  // Symbol table to execute
+        bool m_evenCycle = false;  // Even/odd for flag alternation
+        ExecRec() = default;
         ExecRec(VlExecFnp fnp, VlSelfP selfp, bool evenCycle)
             : m_fnp{fnp}
             , m_selfp{selfp}
@@ -166,24 +161,23 @@ private:
     std::atomic<size_t> m_ready_size;
 
     std::thread m_cthread;  // Underlying C++ thread record
-    VerilatedContext* const m_contextp;  // Context for spawned thread
 
     VL_UNCOPYABLE(VlWorkerThread);
 
 public:
     // CONSTRUCTORS
-    explicit VlWorkerThread(uint32_t threadId, VerilatedContext* contextp,
-                            VlExecutionProfiler* profilerp, VlStartWorkerCb startCb);
+    explicit VlWorkerThread(VerilatedContext* contextp);
     ~VlWorkerThread();
 
     // METHODS
-    inline void dequeWork(ExecRec* workp) VL_MT_SAFE_EXCLUDES(m_mutex) {
+    template <bool SpinWait>
+    void dequeWork(ExecRec* workp) VL_MT_SAFE_EXCLUDES(m_mutex) {
         // Spin for a while, waiting for new data
-        for (int i = 0; i < VL_LOCK_SPINS; ++i) {
-            if (VL_LIKELY(m_ready_size.load(std::memory_order_relaxed))) {  //
-                break;
+        if VL_CONSTEXPR_CXX17 (SpinWait) {
+            for (unsigned i = 0; i < VL_LOCK_SPINS; ++i) {
+                if (VL_LIKELY(m_ready_size.load(std::memory_order_relaxed))) break;
+                VL_CPU_RELAX();
             }
-            VL_CPU_RELAX();
         }
         VerilatedLockGuard lock{m_mutex};
         while (m_ready.empty()) {
@@ -197,7 +191,7 @@ public:
         m_ready.erase(m_ready.begin());
         m_ready_size.fetch_sub(1, std::memory_order_relaxed);
     }
-    inline void addTask(VlExecFnp fnp, VlSelfP selfp, bool evenCycle)
+    void addTask(VlExecFnp fnp, VlSelfP selfp, bool evenCycle = false)
         VL_MT_SAFE_EXCLUDES(m_mutex) {
         bool notify;
         {
@@ -209,15 +203,14 @@ public:
         if (notify) m_cv.notify_one();
     }
 
-    inline void shutdown() { addTask(shutdownTask, nullptr, false); }
-    static void shutdownTask(void*, bool);
+    void shutdown();  // Finish current tasks, then terminate thread
+    void wait();  // Blocks calling thread until all tasks complete in this thread
 
     void workerLoop();
-    static void startWorker(VlWorkerThread* workerp, uint32_t threadId,
-                            VlExecutionProfiler* profilerp, VlStartWorkerCb startCb);
+    static void startWorker(VlWorkerThread* workerp, VerilatedContext* contextp);
 };
 
-class VlThreadPool final {
+class VlThreadPool final : public VerilatedVirtualBase {
     // MEMBERS
     std::vector<VlWorkerThread*> m_workers;  // our workers
 
@@ -226,13 +219,12 @@ public:
     // Construct a thread pool with 'nThreads' dedicated threads. The thread
     // pool will create these threads and make them available to execute tasks
     // via this->workerp(index)->addTask(...)
-    VlThreadPool(VerilatedContext* contextp, int nThreads, VlExecutionProfiler* profilerp,
-                 VlStartWorkerCb startCb);
-    ~VlThreadPool();
+    VlThreadPool(VerilatedContext* contextp, unsigned nThreads);
+    ~VlThreadPool() override;
 
     // METHODS
-    inline int numThreads() const { return m_workers.size(); }
-    inline VlWorkerThread* workerp(int index) {
+    int numThreads() const { return m_workers.size(); }
+    VlWorkerThread* workerp(int index) {
         assert(index >= 0);
         assert(index < m_workers.size());
         return m_workers[index];

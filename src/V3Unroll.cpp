@@ -27,14 +27,17 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3Unroll.h"
-#include "V3Stats.h"
-#include "V3Const.h"
+
 #include "V3Ast.h"
+#include "V3Const.h"
+#include "V3Global.h"
 #include "V3Simulate.h"
+#include "V3Stats.h"
 
 #include <algorithm>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Unroll state, as a visitor of each AstNode
@@ -50,25 +53,21 @@ private:
     bool m_varModeReplace;  // Replacing varrefs
     bool m_varAssignHit;  // Assign var hit
     bool m_generate;  // Expand single generate For loop
+    int m_unrollLimit;  // Unrolling limit
     string m_beginName;  // What name to give begin iterations
     VDouble0 m_statLoops;  // Statistic tracking
     VDouble0 m_statIters;  // Statistic tracking
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     // VISITORS
-    bool cantUnroll(AstNode* nodep, const char* reason) {
+    bool cantUnroll(AstNode* nodep, const char* reason) const {
         if (m_generate)
             nodep->v3warn(E_UNSUPPORTED, "Unsupported: Can't unroll generate for; " << reason);
         UINFO(3, "   Can't Unroll: " << reason << " :" << nodep << endl);
         // if (debug() >= 9) nodep->dumpTree(cout, "-cant-");
-        V3Stats::addStatSum(string("Unrolling gave up, ") + reason, 1);
+        V3Stats::addStatSum(std::string{"Unrolling gave up, "} + reason, 1);
         return false;
-    }
-
-    int unrollCount() const {
-        return m_generate ? v3Global.opt.unrollCount() * 16 : v3Global.opt.unrollCount();
     }
 
     bool bodySizeOverRecurse(AstNode* nodep, int& bodySize, int bodyLimit) {
@@ -163,7 +162,7 @@ private:
 
             // Check whether to we actually want to try and unroll.
             int loops;
-            if (!countLoops(initAssp, condp, incp, unrollCount(), loops)) {
+            if (!countLoops(initAssp, condp, incp, m_unrollLimit, loops)) {
                 return cantUnroll(nodep, "Unable to simulate loop");
             }
 
@@ -281,15 +280,15 @@ private:
         }
         if (precondsp) {
             precondsp->unlinkFrBackWithNext();
-            stmtsp = AstNode::addNextNull(stmtsp, precondsp);
+            stmtsp = AstNode::addNext(stmtsp, precondsp);
         }
         if (bodysp) {
             bodysp->unlinkFrBackWithNext();
-            stmtsp = AstNode::addNextNull(stmtsp, bodysp);  // Maybe null if no body
+            stmtsp = AstNode::addNext(stmtsp, bodysp);  // Maybe null if no body
         }
         if (incp && !VN_IS(nodep, GenFor)) {  // Generates don't need to increment loop index
             incp->unlinkFrBackWithNext();
-            stmtsp = AstNode::addNextNull(stmtsp, incp);  // Maybe null if no body
+            stmtsp = AstNode::addNext(stmtsp, incp);  // Maybe null if no body
         }
         // Mark variable to disable some later warnings
         m_forVarp->usedLoopIdx(true);
@@ -336,11 +335,11 @@ private:
                     }
 
                     ++m_statIters;
-                    if (++times > unrollCount() * 3) {
+                    if (++times / 3 > m_unrollLimit) {
                         nodep->v3error(
                             "Loop unrolling took too long;"
                             " probably this is an infinite loop, or set --unroll-count above "
-                            << unrollCount());
+                            << m_unrollLimit);
                         break;
                     }
 
@@ -373,7 +372,7 @@ private:
         return true;
     }
 
-    virtual void visit(AstWhile* nodep) override {
+    void visit(AstWhile* nodep) override {
         iterateChildren(nodep);
         if (m_varModeCheck || m_varModeReplace) {
         } else {
@@ -389,26 +388,26 @@ private:
             if (nodep->backp()->nextp() == nodep) initp = nodep->backp();
             // Grab assignment
             AstNode* incp = nullptr;  // Should be last statement
-            AstNode* bodysp = nodep->bodysp();
+            AstNode* stmtsp = nodep->stmtsp();
             if (nodep->incsp()) V3Const::constifyEdit(nodep->incsp());
             // cppcheck-suppress duplicateCondition
             if (nodep->incsp()) {
                 incp = nodep->incsp();
             } else {
-                for (incp = nodep->bodysp(); incp && incp->nextp(); incp = incp->nextp()) {}
+                for (incp = nodep->stmtsp(); incp && incp->nextp(); incp = incp->nextp()) {}
                 if (incp) VL_DO_DANGLING(V3Const::constifyEdit(incp), incp);
                 // Again, as may have changed
-                bodysp = nodep->bodysp();
-                for (incp = nodep->bodysp(); incp && incp->nextp(); incp = incp->nextp()) {}
-                if (incp == bodysp) bodysp = nullptr;
+                stmtsp = nodep->stmtsp();
+                for (incp = nodep->stmtsp(); incp && incp->nextp(); incp = incp->nextp()) {}
+                if (incp == stmtsp) stmtsp = nullptr;
             }
             // And check it
-            if (forUnrollCheck(nodep, initp, nodep->precondsp(), nodep->condp(), incp, bodysp)) {
+            if (forUnrollCheck(nodep, initp, nodep->precondsp(), nodep->condp(), incp, stmtsp)) {
                 VL_DO_DANGLING(pushDeletep(nodep), nodep);  // Did replacement
             }
         }
     }
-    virtual void visit(AstGenFor* nodep) override {
+    void visit(AstGenFor* nodep) override {
         if (!m_generate || m_varModeReplace) {
             iterateChildren(nodep);
         }  // else V3Param will recursively call each for loop to be unrolled for us
@@ -428,22 +427,22 @@ private:
                 // deleted by V3Const.
                 VL_DO_DANGLING(pushDeletep(nodep->unlinkFrBack()), nodep);
             } else if (forUnrollCheck(nodep, nodep->initsp(), nullptr, nodep->condp(),
-                                      nodep->incsp(), nodep->bodysp())) {
+                                      nodep->incsp(), nodep->stmtsp())) {
                 VL_DO_DANGLING(pushDeletep(nodep), nodep);  // Did replacement
             } else {
                 nodep->v3error("For loop doesn't have genvar index, or is malformed");
             }
         }
     }
-    virtual void visit(AstNodeFor* nodep) override {
+    void visit(AstNodeFor* nodep) override {
         if (m_generate) {  // Ignore for's when expanding genfor's
             iterateChildren(nodep);
         } else {
-            nodep->v3error("V3Begin should have removed standard FORs");
+            nodep->v3fatalSrc("V3Begin should have removed standard FORs");
         }
     }
 
-    virtual void visit(AstVarRef* nodep) override {
+    void visit(AstVarRef* nodep) override {
         if (m_varModeCheck && nodep->varp() == m_forVarp && nodep->varScopep() == m_forVscp
             && nodep->access().isWriteOrRW()) {
             UINFO(8, "   Itervar assigned to: " << nodep << endl);
@@ -460,7 +459,7 @@ private:
 
     //--------------------
     // Default: Just iterate
-    virtual void visit(AstNode* nodep) override {
+    void visit(AstNode* nodep) override {
         if (m_varModeCheck && nodep == m_ignoreIncp) {
             // Ignore subtree that is the increment
         } else {
@@ -471,7 +470,7 @@ private:
 public:
     // CONSTRUCTORS
     UnrollVisitor() { init(false, ""); }
-    virtual ~UnrollVisitor() override {
+    ~UnrollVisitor() override {
         V3Stats::addStatSum("Optimizations, Unrolled Loops", m_statLoops);
         V3Stats::addStatSum("Optimizations, Unrolled Iterations", m_statIters);
     }
@@ -485,6 +484,12 @@ public:
         m_varModeReplace = false;
         m_varAssignHit = false;
         m_generate = generate;
+        m_unrollLimit = v3Global.opt.unrollCount();
+        if (generate) {
+            m_unrollLimit = std::numeric_limits<int>::max() / 16 > m_unrollLimit
+                                ? m_unrollLimit * 16
+                                : std::numeric_limits<int>::max();
+        }
         m_beginName = beginName;
     }
     void process(AstNode* nodep, bool generate, const string& beginName) {
@@ -513,5 +518,5 @@ void V3Unroll::unrollAll(AstNetlist* nodep) {
         UnrollStateful unroller;
         unroller.unrollAll(nodep);
     }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("unroll", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 3);
+    V3Global::dumpCheckGlobalTree("unroll", 0, dumpTree() >= 3);
 }

@@ -12,18 +12,18 @@
 #ifdef IS_VPI
 
 #include "vpi_user.h"
+
 #include <cstdlib>
 
 #else
 
-#include "Vt_vpi_memory.h"
 #include "verilated.h"
-#include "svdpi.h"
-
-#include "Vt_vpi_memory__Dpi.h"
-
-#include "verilated_vpi.h"
 #include "verilated_vcd_c.h"
+#include "verilated_vpi.h"
+
+#include "Vt_vpi_memory.h"
+#include "Vt_vpi_memory__Dpi.h"
+#include "svdpi.h"
 
 #endif
 
@@ -31,9 +31,10 @@
 #include <cstring>
 #include <iostream>
 
+// These require the above. Comment prevents clang-format moving them
+#include "TestCheck.h"
 #include "TestSimulator.h"
 #include "TestVpi.h"
-#include "TestCheck.h"
 
 // __FILE__ is too long
 #define FILENM "t_vpi_memory.cpp"
@@ -137,7 +138,7 @@ void _mem_check(const char* name, int size, int left, int right, int words) {
         value.format = vpiBinStrVal;
         vpi_get_value(mem_h, &value);
         TEST_CHECK_Z(vpi_chk_error(&e));
-        TEST_CHECK_EQ(std::string(value.value.str), binStr);
+        TEST_CHECK_EQ(std::string{value.value.str}, binStr);
     }
 
     // don't care for non verilator

@@ -39,7 +39,7 @@
 
 #ifdef __GNUC__
 # define VL_ATTR_ALIGNED(alignment) __attribute__((aligned(alignment)))
-# define VL_ATTR_ALWINLINE __attribute__((always_inline))
+# define VL_ATTR_ALWINLINE __attribute__((always_inline)) inline
 # define VL_ATTR_NOINLINE __attribute__((noinline))
 # define VL_ATTR_COLD __attribute__((cold))
 # define VL_ATTR_HOT __attribute__((hot))
@@ -69,9 +69,9 @@
 #  define VL_EXCLUDES(x) __attribute__((locks_excluded(x)))
 #  define VL_SCOPED_CAPABILITY __attribute__((scoped_lockable))
 # endif
-# define VL_LIKELY(x) __builtin_expect(!!(x), 1)
-# define VL_UNLIKELY(x) __builtin_expect(!!(x), 0)
-# define VL_UNREACHABLE __builtin_unreachable();
+# define VL_LIKELY(x) __builtin_expect(!!(x), 1)  // Prefer over C++20 [[likely]]
+# define VL_UNLIKELY(x) __builtin_expect(!!(x), 0)  // Prefer over C++20 [[unlikely]]
+# define VL_UNREACHABLE __builtin_unreachable()  // C++23 std::unreachable()
 # define VL_PREFETCH_RD(p) __builtin_prefetch((p), 0)
 # define VL_PREFETCH_RW(p) __builtin_prefetch((p), 1)
 #endif
@@ -163,14 +163,22 @@
 // Comment tag that Function is pure (and thus also VL_MT_SAFE)
 #define VL_PURE
 // Comment tag that function is threadsafe when VL_THREADED
-#define VL_MT_SAFE
+#if defined(__clang__)
+# define VL_MT_SAFE __attribute__((annotate("MT_SAFE")))
+#else
+# define VL_MT_SAFE
+#endif
 // Comment tag that function is threadsafe when VL_THREADED, only
 // during normal operation (post-init)
 #define VL_MT_SAFE_POSTINIT
 // Attribute that function is clang threadsafe and uses given mutex
 #define VL_MT_SAFE_EXCLUDES(mutex) VL_EXCLUDES(mutex)
 // Comment tag that function is not threadsafe when VL_THREADED
-#define VL_MT_UNSAFE
+#if defined(__clang__)
+# define VL_MT_UNSAFE __attribute__((annotate("MT_UNSAFE")))
+#else
+# define VL_MT_UNSAFE
+#endif
 // Comment tag that function is not threadsafe when VL_THREADED,
 // protected to make sure single-caller
 #define VL_MT_UNSAFE_ONE
@@ -218,20 +226,21 @@
 // C++-2011
 
 #if __cplusplus >= 201103L || defined(__GXX_EXPERIMENTAL_CXX0X__) || defined(VL_CPPCHECK)
-# ifndef VL_NO_LEGACY
-// These are deprecated historical defines. We leave them in case users referenced them.
-#  define VL_EQ_DELETE = delete
-#  define vl_unique_ptr std::unique_ptr
-#  define vl_unordered_map std::unordered_map
-#  define vl_unordered_set std::unordered_set
-#  define VL_INCLUDE_UNORDERED_MAP <unordered_map>
-#  define VL_INCLUDE_UNORDERED_SET <unordered_set>
-#  define VL_FINAL final
-#  define VL_MUTABLE mutable
-#  define VL_OVERRIDE override
-# endif
 #else
 # error "Verilator requires a C++11 or newer compiler"
+#endif
+
+#ifndef VL_NO_LEGACY
+// These are deprecated historical defines. We leave them in case users referenced them.
+# define VL_EQ_DELETE = delete
+# define vl_unique_ptr std::unique_ptr
+# define vl_unordered_map std::unordered_map
+# define vl_unordered_set std::unordered_set
+# define VL_INCLUDE_UNORDERED_MAP <unordered_map>
+# define VL_INCLUDE_UNORDERED_SET <unordered_set>
+# define VL_FINAL final
+# define VL_MUTABLE mutable
+# define VL_OVERRIDE override
 #endif
 
 //=========================================================================
@@ -255,14 +264,11 @@
 // Internal coverage
 
 #ifdef VL_GCOV
-extern "C" {
-void __gcov_flush();  // gcc sources gcc/gcov-io.h has the prototype
-}
-// Flush internal code coverage data before e.g. std::abort()
-# define VL_GCOV_FLUSH() \
-    __gcov_flush()
+extern "C" void __gcov_dump();
+// Dump internal code coverage data before e.g. std::abort()
+# define VL_GCOV_DUMP() __gcov_dump()
 #else
-# define VL_GCOV_FLUSH()
+# define VL_GCOV_DUMP()
 #endif
 
 //=========================================================================
@@ -456,7 +462,8 @@ using ssize_t = uint32_t;  ///< signed size_t; returned from read()
 // or 0x0 if not implemented on this platform
 #define VL_GET_CPU_TICK(val) \
     { \
-        uint32_t hi, lo; \
+        uint32_t hi; \
+        uint32_t lo; \
         asm volatile("rdtsc" : "=a"(lo), "=d"(hi)); \
         (val) = ((uint64_t)lo) | (((uint64_t)hi) << 32); \
     }
@@ -532,24 +539,49 @@ using ssize_t = uint32_t;  ///< signed size_t; returned from read()
 #define VL_STRINGIFY2(x) #x
 
 //=========================================================================
+// Offset of field in type
+
+// Address zero can cause compiler problems
+#define VL_OFFSETOF(type, field) \
+    (reinterpret_cast<size_t>(&(reinterpret_cast<type*>(0x10000000)->field)) - 0x10000000)
+
+//=========================================================================
 // Conversions
+
+#include <utility>
 
 namespace vlstd {
 
-template <typename T> struct reverse_wrapper {
+template <typename T>
+struct reverse_wrapper {
     const T& m_v;
 
     explicit reverse_wrapper(const T& a_v)
         : m_v(a_v) {}
-    inline auto begin() -> decltype(m_v.rbegin()) { return m_v.rbegin(); }
-    inline auto end() -> decltype(m_v.rend()) { return m_v.rend(); }
+    auto begin() -> decltype(m_v.rbegin()) { return m_v.rbegin(); }
+    auto end() -> decltype(m_v.rend()) { return m_v.rend(); }
 };
 
 // C++20's std::ranges::reverse_view
-template <typename T> reverse_wrapper<T> reverse_view(const T& v) { return reverse_wrapper<T>(v); }
+template <typename T>
+reverse_wrapper<T> reverse_view(const T& v) {
+    return reverse_wrapper<T>(v);
+}
 
 // C++17's std::as_const
-template <class T> T const& as_const(T& v) { return v; }
+template <class T>
+T const& as_const(T& v) {
+    return v;
+}
+
+// C++14's std::exchange
+template <class T, class U = T>
+T exchange(T& obj, U&& new_value) {
+    T old_value = std::move(obj);
+    obj = std::forward<U>(new_value);
+    return old_value;
+}
+
 };  // namespace vlstd
 
 //=========================================================================

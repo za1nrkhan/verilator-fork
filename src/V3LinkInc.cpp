@@ -39,11 +39,14 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3LinkInc.h"
+
 #include "V3Ast.h"
+#include "V3Global.h"
 
 #include <algorithm>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 
@@ -57,14 +60,13 @@ private:
     };
 
     // STATE
+    AstNodeFTask* m_ftaskp = nullptr;  // Function or task we're inside
     int m_modIncrementsNum = 0;  // Var name counter
     InsertMode m_insMode = IM_BEFORE;  // How to insert
     AstNode* m_insStmtp = nullptr;  // Where to insert statement
     bool m_unsupportedHere = false;  // Used to detect where it's not supported yet
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
-
     void insertBeforeStmt(AstNode* nodep, AstNode* newp) {
         // Return node that must be visited, if any
         // See also AstNode::addBeforeStmt; this predates that function
@@ -88,12 +90,17 @@ private:
     }
 
     // VISITORS
-    virtual void visit(AstNodeModule* nodep) override {
+    void visit(AstNodeModule* nodep) override {
         VL_RESTORER(m_modIncrementsNum);
         m_modIncrementsNum = 0;
         iterateChildren(nodep);
     }
-    virtual void visit(AstWhile* nodep) override {
+    void visit(AstNodeFTask* nodep) override {
+        VL_RESTORER(m_ftaskp);
+        m_ftaskp = nodep;
+        iterateChildren(nodep);
+    }
+    void visit(AstWhile* nodep) override {
         // Special, as statements need to be put in different places
         // Preconditions insert first just before themselves (the normal
         // rule for other statement types)
@@ -105,12 +112,12 @@ private:
         iterateAndNextNull(nodep->condp());
         // Body insert just before themselves
         m_insStmtp = nullptr;  // First thing should be new statement
-        iterateAndNextNull(nodep->bodysp());
+        iterateAndNextNull(nodep->stmtsp());
         iterateAndNextNull(nodep->incsp());
         // Done the loop
         m_insStmtp = nullptr;  // Next thing should be new statement
     }
-    virtual void visit(AstForeach* nodep) override {
+    void visit(AstForeach* nodep) override {
         // Special, as statements need to be put in different places
         // Body insert just before themselves
         m_insStmtp = nullptr;  // First thing should be new statement
@@ -118,7 +125,7 @@ private:
         // Done the loop
         m_insStmtp = nullptr;  // Next thing should be new statement
     }
-    virtual void visit(AstJumpBlock* nodep) override {
+    void visit(AstJumpBlock* nodep) override {
         // Special, as statements need to be put in different places
         // Body insert just before themselves
         m_insStmtp = nullptr;  // First thing should be new statement
@@ -126,15 +133,15 @@ private:
         // Done the loop
         m_insStmtp = nullptr;  // Next thing should be new statement
     }
-    virtual void visit(AstNodeIf* nodep) override {
+    void visit(AstNodeIf* nodep) override {
         m_insStmtp = nodep;
         iterateAndNextNull(nodep->condp());
         m_insStmtp = nullptr;
-        iterateAndNextNull(nodep->ifsp());
+        iterateAndNextNull(nodep->thensp());
         iterateAndNextNull(nodep->elsesp());
         m_insStmtp = nullptr;
     }
-    virtual void visit(AstCaseItem* nodep) override {
+    void visit(AstCaseItem* nodep) override {
         m_insMode = IM_BEFORE;
         {
             VL_RESTORER(m_unsupportedHere);
@@ -142,13 +149,32 @@ private:
             iterateAndNextNull(nodep->condsp());
         }
         m_insStmtp = nullptr;  // Next thing should be new statement
-        iterateAndNextNull(nodep->bodysp());
+        iterateAndNextNull(nodep->stmtsp());
     }
-    virtual void visit(AstNodeFor* nodep) override {  // LCOV_EXCL_LINE
+    void visit(AstNodeFor* nodep) override {  // LCOV_EXCL_LINE
         nodep->v3fatalSrc(
             "For statements should have been converted to while statements in V3Begin.cpp");
     }
-    virtual void visit(AstNodeStmt* nodep) override {
+    void visit(AstDelay* nodep) override {
+        m_insStmtp = nodep;
+        iterateAndNextNull(nodep->lhsp());
+        m_insStmtp = nullptr;
+        iterateAndNextNull(nodep->stmtsp());
+        m_insStmtp = nullptr;
+    }
+    void visit(AstEventControl* nodep) override {
+        m_insStmtp = nullptr;
+        iterateAndNextNull(nodep->stmtsp());
+        m_insStmtp = nullptr;
+    }
+    void visit(AstWait* nodep) override {
+        m_insStmtp = nodep;
+        iterateAndNextNull(nodep->condp());
+        m_insStmtp = nullptr;
+        iterateAndNextNull(nodep->stmtsp());
+        m_insStmtp = nullptr;
+    }
+    void visit(AstNodeStmt* nodep) override {
         if (!nodep->isStatement()) {
             iterateChildren(nodep);
             return;
@@ -164,11 +190,12 @@ private:
         UINFO(9, "Marking unsupported " << nodep << endl);
         iterateChildren(nodep);
     }
-    virtual void visit(AstLogAnd* nodep) override { unsupported_visit(nodep); }
-    virtual void visit(AstLogOr* nodep) override { unsupported_visit(nodep); }
-    virtual void visit(AstLogEq* nodep) override { unsupported_visit(nodep); }
-    virtual void visit(AstLogIf* nodep) override { unsupported_visit(nodep); }
-    virtual void visit(AstNodeCond* nodep) override { unsupported_visit(nodep); }
+    void visit(AstLogAnd* nodep) override { unsupported_visit(nodep); }
+    void visit(AstLogOr* nodep) override { unsupported_visit(nodep); }
+    void visit(AstLogEq* nodep) override { unsupported_visit(nodep); }
+    void visit(AstLogIf* nodep) override { unsupported_visit(nodep); }
+    void visit(AstNodeCond* nodep) override { unsupported_visit(nodep); }
+    void visit(AstPropClocked* nodep) override { unsupported_visit(nodep); }
     void prepost_visit(AstNodeTriop* nodep) {
         // Check if we are underneath a statement
         if (!m_insStmtp) {
@@ -220,6 +247,7 @@ private:
         const string name = string("__Vincrement") + cvtToStr(++m_modIncrementsNum);
         AstVar* const varp = new AstVar(fl, VVarType::BLOCKTEMP, name, VFlagChildDType(),
                                         varrefp->varp()->subDTypep()->cloneTree(true));
+        if (m_ftaskp) varp->funcLocal(true);
 
         // Declare the variable
         insertBeforeStmt(nodep, varp);
@@ -253,20 +281,20 @@ private:
         }
 
         // Replace the node with the temporary
-        nodep->replaceWith(new AstVarRef(varrefp->fileline(), varp, VAccess::WRITE));
+        nodep->replaceWith(new AstVarRef{varrefp->fileline(), varp, VAccess::READ});
         VL_DO_DANGLING(nodep->deleteTree(), nodep);
     }
-    virtual void visit(AstPreAdd* nodep) override { prepost_visit(nodep); }
-    virtual void visit(AstPostAdd* nodep) override { prepost_visit(nodep); }
-    virtual void visit(AstPreSub* nodep) override { prepost_visit(nodep); }
-    virtual void visit(AstPostSub* nodep) override { prepost_visit(nodep); }
-    virtual void visit(AstGenFor* nodep) override { iterateChildren(nodep); }
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstPreAdd* nodep) override { prepost_visit(nodep); }
+    void visit(AstPostAdd* nodep) override { prepost_visit(nodep); }
+    void visit(AstPreSub* nodep) override { prepost_visit(nodep); }
+    void visit(AstPostSub* nodep) override { prepost_visit(nodep); }
+    void visit(AstGenFor* nodep) override { iterateChildren(nodep); }
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTORS
     explicit LinkIncVisitor(AstNetlist* nodep) { iterate(nodep); }
-    virtual ~LinkIncVisitor() override = default;
+    ~LinkIncVisitor() override = default;
 };
 
 //######################################################################
@@ -275,5 +303,5 @@ public:
 void V3LinkInc::linkIncrements(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { LinkIncVisitor{nodep}; }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("linkinc", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 3);
+    V3Global::dumpCheckGlobalTree("linkinc", 0, dumpTree() >= 3);
 }

@@ -39,21 +39,26 @@ struct V3OptionParser::Impl {
     class ActionBase VL_NOT_FINAL : public ActionIfs {
         bool m_undocumented = false;  // This option is not documented
     public:
-        virtual bool isValueNeeded() const override final { return MODE == en::VALUE; }
-        virtual bool isFOnOffAllowed() const override final { return MODE == en::FONOFF; }
-        virtual bool isOnOffAllowed() const override final { return MODE == en::ONOFF; }
-        virtual bool isPartialMatchAllowed() const override final { return ALLOW_PARTIAL_MATCH; }
-        virtual bool isUndocumented() const override { return m_undocumented; }
-        virtual void undocumented() override { m_undocumented = true; }
+        bool isValueNeeded() const override final { return MODE == en::VALUE; }
+        bool isFOnOffAllowed() const override final { return MODE == en::FONOFF; }
+        bool isOnOffAllowed() const override final { return MODE == en::ONOFF; }
+        bool isPartialMatchAllowed() const override final { return ALLOW_PARTIAL_MATCH; }
+        bool isUndocumented() const override { return m_undocumented; }
+        void undocumented() override { m_undocumented = true; }
     };
 
     // Actual action classes
-    template <typename T> class ActionSet;  // "-opt" for bool-ish, "-opt val" for int and string
-    template <typename BOOL> class ActionFOnOff;  // "-fopt" and "-fno-opt" for bool-ish
-    template <typename BOOL> class ActionOnOff;  // "-opt" and "-no-opt" for bool-ish
+    template <typename T>
+    class ActionSet;  // "-opt" for bool-ish, "-opt val" for int and string
+    template <typename BOOL>
+    class ActionFOnOff;  // "-fopt" and "-fno-opt" for bool-ish
+    template <typename BOOL>
+    class ActionOnOff;  // "-opt" and "-no-opt" for bool-ish
     class ActionCbCall;  // Callback without argument for "-opt"
+    class ActionCbFOnOff;  // Callback for "-fopt" and "-fno-opt"
     class ActionCbOnOff;  // Callback for "-opt" and "-no-opt"
-    template <class T> class ActionCbVal;  // Callback for "-opt val"
+    template <class T>
+    class ActionCbVal;  // Callback for "-opt val"
     class ActionCbPartialMatch;  // Callback "-O3" for "-O"
     class ActionCbPartialMatchVal;  // Callback "-debugi-V3Options 3" for "-debugi-"
 
@@ -67,13 +72,14 @@ struct V3OptionParser::Impl {
 // Action classes in V3OptionParser::Impl
 
 #define V3OPTION_PARSER_DEF_ACT_CLASS(className, type, body, enType) \
-    template <> class V3OptionParser::Impl::className<type> final : public ActionBase<enType> { \
+    template <> \
+    class V3OptionParser::Impl::className<type> final : public ActionBase<enType> { \
         type* const m_valp; /* Pointer to a option variable*/ \
 \
     public: \
         explicit className(type* valp) \
             : m_valp(valp) {} \
-        virtual void exec(const char* optp, const char* argp) override { body; } \
+        void exec(const char* optp, const char* argp) override { body; } \
     }
 
 V3OPTION_PARSER_DEF_ACT_CLASS(ActionSet, bool, *m_valp = true, en::NONE);
@@ -99,10 +105,12 @@ V3OPTION_PARSER_DEF_ACT_CLASS(ActionOnOff, VOptionBool, m_valp->setTrueOrFalse(!
         using CbType = std::function<funcType>; \
         explicit className(CbType cb) \
             : m_cb(std::move(cb)) {} \
-        virtual void exec(const char* optp, const char* argp) override { body; } \
+        void exec(const char* optp, const char* argp) override { body; } \
     }
 
 V3OPTION_PARSER_DEF_ACT_CB_CLASS(ActionCbCall, void(void), m_cb(), en::NONE);
+V3OPTION_PARSER_DEF_ACT_CB_CLASS(ActionCbFOnOff, void(bool), m_cb(!hasPrefixFNo(optp)),
+                                 en::FONOFF);
 V3OPTION_PARSER_DEF_ACT_CB_CLASS(ActionCbOnOff, void(bool), m_cb(!hasPrefixNo(optp)), en::ONOFF);
 template <>
 V3OPTION_PARSER_DEF_ACT_CB_CLASS(ActionCbVal<int>, void(int), m_cb(std::atoi(argp)), en::VALUE);
@@ -125,8 +133,8 @@ V3OptionParser::ActionIfs* V3OptionParser::find(const char* optp) {
     for (auto&& act : m_pimpl->m_options) {
         if (act.second->isFOnOffAllowed()) {  // Find starts with "-fno"
             if (const char* const nop
-                = VString::startsWith(optp, "-fno-") ? (optp + strlen("-fno-")) : nullptr) {
-                if (act.first.substr(strlen("-f"), std::string::npos)
+                = VString::startsWith(optp, "-fno-") ? (optp + std::strlen("-fno-")) : nullptr) {
+                if (act.first.substr(std::strlen("-f"), std::string::npos)
                     == nop) {  // [-f]opt = [-fno-]opt
                     return act.second.get();
                 }
@@ -134,8 +142,8 @@ V3OptionParser::ActionIfs* V3OptionParser::find(const char* optp) {
         }
         if (act.second->isOnOffAllowed()) {  // Find starts with "-no"
             if (const char* const nop
-                = VString::startsWith(optp, "-no") ? (optp + strlen("-no")) : nullptr) {
-                if (act.first == nop || act.first == (string{"-"} + nop)) {
+                = VString::startsWith(optp, "-no") ? (optp + std::strlen("-no")) : nullptr) {
+                if (act.first == nop || act.first == (std::string{"-"} + nop)) {
                     return act.second.get();
                 }
             }
@@ -201,7 +209,7 @@ void V3OptionParser::finalize() {
         m_pimpl->m_spellCheck.pushCandidate(opt.first);
         if (opt.second->isFOnOffAllowed()) {
             m_pimpl->m_spellCheck.pushCandidate(
-                "-fno-" + opt.first.substr(strlen("-f"), std::string::npos));
+                "-fno-" + opt.first.substr(std::strlen("-f"), std::string::npos));
         }
         if (opt.second->isOnOffAllowed()) m_pimpl->m_spellCheck.pushCandidate("-no" + opt.first);
     }
@@ -233,6 +241,7 @@ V3OPTION_PARSER_DEF_OP(OnOff, bool*, ActionOnOff<bool>)
 V3OPTION_PARSER_DEF_OP(OnOff, VOptionBool*, ActionOnOff<VOptionBool>)
 #endif
 V3OPTION_PARSER_DEF_OP(CbCall, Impl::ActionCbCall::CbType, ActionCbCall)
+V3OPTION_PARSER_DEF_OP(CbFOnOff, Impl::ActionCbFOnOff::CbType, ActionCbFOnOff)
 V3OPTION_PARSER_DEF_OP(CbOnOff, Impl::ActionCbOnOff::CbType, ActionCbOnOff)
 V3OPTION_PARSER_DEF_OP(CbVal, Impl::ActionCbVal<int>::CbType, ActionCbVal<int>)
 V3OPTION_PARSER_DEF_OP(CbVal, Impl::ActionCbVal<const char*>::CbType, ActionCbVal<const char*>)

@@ -26,16 +26,19 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
-#include "V3Const.h"
 #include "V3Task.h"
+
 #include "V3Ast.h"
+#include "V3Const.h"
 #include "V3EmitCBase.h"
+#include "V3Global.h"
 #include "V3Graph.h"
 #include "V3LinkLValue.h"
 
 #include <map>
 #include <tuple>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Graph subclasses
@@ -46,7 +49,7 @@ class TaskBaseVertex VL_NOT_FINAL : public V3GraphVertex {
 public:
     explicit TaskBaseVertex(V3Graph* graphp)
         : V3GraphVertex{graphp} {}
-    virtual ~TaskBaseVertex() override = default;
+    ~TaskBaseVertex() override = default;
     bool pure() const { return m_impurep == nullptr; }
     AstNode* impureNode() const { return m_impurep; }
     void impure(AstNode* nodep) { m_impurep = nodep; }
@@ -63,10 +66,10 @@ public:
     TaskFTaskVertex(V3Graph* graphp, AstNodeFTask* nodep)
         : TaskBaseVertex{graphp}
         , m_nodep{nodep} {}
-    virtual ~TaskFTaskVertex() override = default;
+    ~TaskFTaskVertex() override = default;
     AstNodeFTask* nodep() const { return m_nodep; }
-    virtual string name() const override { return nodep()->name(); }
-    virtual string dotColor() const override { return pure() ? "black" : "red"; }
+    string name() const override { return nodep()->name(); }
+    string dotColor() const override { return pure() ? "black" : "red"; }
     AstCFunc* cFuncp() const { return m_cFuncp; }
     void cFuncp(AstCFunc* nodep) { m_cFuncp = nodep; }
 };
@@ -76,17 +79,17 @@ class TaskCodeVertex final : public TaskBaseVertex {
 public:
     explicit TaskCodeVertex(V3Graph* graphp)
         : TaskBaseVertex{graphp} {}
-    virtual ~TaskCodeVertex() override = default;
-    virtual string name() const override { return "*CODE*"; }
-    virtual string dotColor() const override { return "green"; }
+    ~TaskCodeVertex() override = default;
+    string name() const override { return "*CODE*"; }
+    string dotColor() const override { return "green"; }
 };
 
 class TaskEdge final : public V3GraphEdge {
 public:
     TaskEdge(V3Graph* graphp, TaskBaseVertex* fromp, TaskBaseVertex* top)
         : V3GraphEdge{graphp, fromp, top, 1, false} {}
-    virtual ~TaskEdge() override = default;
-    virtual string dotLabel() const override { return "w" + cvtToStr(weight()); }
+    ~TaskEdge() override = default;
+    string dotLabel() const override { return "w" + cvtToStr(weight()); }
 };
 
 //######################################################################
@@ -165,14 +168,14 @@ private:
     }
 
     // VISITORS
-    virtual void visit(AstScope* nodep) override {
+    void visit(AstScope* nodep) override {
         // Each FTask is unique per-scope, so AstNodeFTaskRefs do not need
         // pointers to what scope the FTask is to be invoked under.
         // However, to create variables, we need to track the scopes involved.
         // Find all var->varscope mappings, for later cleanup
         for (AstNode* stmtp = nodep->varsp(); stmtp; stmtp = stmtp->nextp()) {
             if (AstVarScope* const vscp = VN_CAST(stmtp, VarScope)) {
-                if (vscp->varp()->isFuncLocal()) {
+                if (vscp->varp()->isFuncLocal() || vscp->varp()->isUsedLoopIdx()) {
                     UINFO(9, "   funcvsc " << vscp << endl);
                     m_varToScopeMap.insert(
                         std::make_pair(std::make_pair(nodep, vscp->varp()), vscp));
@@ -185,12 +188,12 @@ private:
         }
         iterateChildren(nodep);
     }
-    virtual void visit(AstAssignW* nodep) override {
+    void visit(AstAssignW* nodep) override {
         m_assignwp = nodep;
         VL_DO_DANGLING(iterateChildren(nodep), nodep);  // May delete nodep.
         m_assignwp = nullptr;
     }
-    virtual void visit(AstNodeFTaskRef* nodep) override {
+    void visit(AstNodeFTaskRef* nodep) override {
         // Includes handling AstMethodCall, AstNew
         if (m_assignwp) {
             // Wire assigns must become always statements to deal with insertion
@@ -203,7 +206,7 @@ private:
         UASSERT_OBJ(nodep->taskp(), nodep, "Unlinked task");
         new TaskEdge(&m_callGraph, m_curVxp, getFTaskVertex(nodep->taskp()));
     }
-    virtual void visit(AstNodeFTask* nodep) override {
+    void visit(AstNodeFTask* nodep) override {
         UINFO(9, "  TASK " << nodep << endl);
         {
             VL_RESTORER(m_curVxp);
@@ -220,7 +223,7 @@ private:
             iterateChildren(nodep);
         }
     }
-    virtual void visit(AstPragma* nodep) override {
+    void visit(AstPragma* nodep) override {
         if (nodep->pragType() == VPragmaType::NO_INLINE_TASK) {
             // Just mark for the next steps, and we're done with it.
             m_curVxp->noInline(true);
@@ -229,17 +232,17 @@ private:
             iterateChildren(nodep);
         }
     }
-    virtual void visit(AstVar* nodep) override {
+    void visit(AstVar* nodep) override {
         iterateChildren(nodep);
         nodep->user4p(m_curVxp);  // Remember what task it's under
     }
-    virtual void visit(AstVarRef* nodep) override {
+    void visit(AstVarRef* nodep) override {
         iterateChildren(nodep);
         if (nodep->varp()->user4u().toGraphVertex() != m_curVxp) {
             if (m_curVxp->pure() && !nodep->varp()->isXTemp()) m_curVxp->impure(nodep);
         }
     }
-    virtual void visit(AstClass* nodep) override {
+    void visit(AstClass* nodep) override {
         // Move initial statements into the constructor
         m_initialps.clear();
         m_ctorp = nullptr;
@@ -249,7 +252,7 @@ private:
         }
         UASSERT_OBJ(m_ctorp, nodep, "class constructor missing");  // LinkDot always makes it
         for (AstInitialAutomatic* initialp : m_initialps) {
-            if (AstNode* const newp = initialp->bodysp()) {
+            if (AstNode* const newp = initialp->stmtsp()) {
                 newp->unlinkFrBackWithNext();
                 if (!m_ctorp->stmtsp()) {
                     m_ctorp->addStmtsp(newp);
@@ -263,12 +266,12 @@ private:
         m_ctorp = nullptr;
         m_classp = nullptr;
     }
-    virtual void visit(AstInitialAutomatic* nodep) override {
+    void visit(AstInitialAutomatic* nodep) override {
         m_initialps.push_back(nodep);
         iterateChildren(nodep);
     }
     //--------------------
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTORS
@@ -280,9 +283,9 @@ public:
         iterate(nodep);
         //
         m_callGraph.removeRedundantEdgesSum(&TaskEdge::followAlwaysTrue);
-        m_callGraph.dumpDotFilePrefixed("task_call");
+        if (dumpGraph()) m_callGraph.dumpDotFilePrefixed("task_call");
     }
-    virtual ~TaskStateVisitor() override = default;
+    ~TaskStateVisitor() override = default;
     VL_UNCOPYABLE(TaskStateVisitor);
 };
 
@@ -359,18 +362,18 @@ private:
     AstScope* m_scopep = nullptr;  // Current scope
     InsertMode m_insMode = IM_BEFORE;  // How to insert
     AstNode* m_insStmtp = nullptr;  // Where to insert statement
+    bool m_inSensesp = false;  // Are we under a senitem?
     int m_modNCalls = 0;  // Incrementing func # for making symbols
     DpiCFuncs m_dpiNames;  // Map of all created DPI functions
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     AstVarScope* createFuncVar(AstCFunc* funcp, const string& name, AstVar* examplep) {
         AstVar* const newvarp = new AstVar(funcp->fileline(), VVarType::BLOCKTEMP, name, examplep);
         newvarp->funcLocal(true);
         funcp->addInitsp(newvarp);
         AstVarScope* const newvscp = new AstVarScope(funcp->fileline(), m_scopep, newvarp);
-        m_scopep->addVarp(newvscp);
+        m_scopep->addVarsp(newvscp);
         return newvscp;
     }
     AstVarScope* createInputVar(AstCFunc* funcp, const string& name, VBasicDTypeKwd kwd) {
@@ -380,7 +383,7 @@ private:
         newvarp->direction(VDirection::INPUT);
         funcp->addArgsp(newvarp);
         AstVarScope* const newvscp = new AstVarScope(funcp->fileline(), m_scopep, newvarp);
-        m_scopep->addVarp(newvscp);
+        m_scopep->addVarsp(newvscp);
         return newvscp;
     }
     AstVarScope* createVarScope(AstVar* invarp, const string& name) {
@@ -396,16 +399,16 @@ private:
                 = new AstVar{invarp->fileline(), VVarType::BLOCKTEMP, name, invarp};
             newvarp->funcLocal(false);
             newvarp->propagateAttrFrom(invarp);
-            m_modp->addStmtp(newvarp);
+            m_modp->addStmtsp(newvarp);
             AstVarScope* const newvscp = new AstVarScope{newvarp->fileline(), m_scopep, newvarp};
-            m_scopep->addVarp(newvscp);
+            m_scopep->addVarsp(newvscp);
             return newvscp;
         }
     }
 
     // Replace varrefs with new var pointer
     void relink(AstNode* nodep) {
-        nodep->foreachAndNext<AstVarRef>([](AstVarRef* refp) {
+        nodep->foreachAndNext([](AstVarRef* refp) {
             if (refp->varp()->user2p()) {  // It's being converted to an alias.
                 AstVarScope* const newvscp = VN_AS(refp->varp()->user2p(), VarScope);
                 refp->varScopep(newvscp);
@@ -495,7 +498,7 @@ private:
                     // Put assignment in FRONT of all other statements
                     if (AstNode* const afterp = beginp->nextp()) {
                         afterp->unlinkFrBackWithNext();
-                        assp->addNext(afterp);
+                        AstNode::addNext<AstNode, AstNode>(assp, afterp);
                     }
                     beginp->addNext(assp);
                 }
@@ -765,7 +768,7 @@ private:
         funcp->protect(false);
         funcp->cname(nodep->cname());
         // Add DPI Export to top, since it's a global function
-        m_topScopep->scopep()->addActivep(funcp);
+        m_topScopep->scopep()->addBlocksp(funcp);
 
         {  // Create dispatch wrapper
             // Note this function may dispatch to myfunc on a different class.
@@ -818,7 +821,7 @@ private:
                     AstVarRef* const refp
                         = new AstVarRef(portp->fileline(), outvscp,
                                         portp->isWritable() ? VAccess::WRITE : VAccess::READ);
-                    argnodesp = argnodesp->addNextNull(refp);
+                    argnodesp = argnodesp->addNext(refp);
 
                     if (portp->isNonOutput()) {
                         std::string frName
@@ -846,7 +849,7 @@ private:
             outvscp->varp()->protect(false);
             AstVarRef* const refp = new AstVarRef(
                 portp->fileline(), outvscp, portp->isWritable() ? VAccess::WRITE : VAccess::READ);
-            argnodesp = argnodesp->addNextNull(refp);
+            argnodesp = argnodesp->addNext(refp);
         }
 
         {  // Call the user function
@@ -854,9 +857,9 @@ private:
             // doesn't rip up the variables on us
             args += ");\n";
             AstCStmt* const newp = new AstCStmt(nodep->fileline(), "(*__Vcb)(");
-            newp->addBodysp(argnodesp);
+            newp->addExprsp(argnodesp);
             VL_DANGLING(argnodesp);
-            newp->addBodysp(new AstText(nodep->fileline(), args, true));
+            newp->addExprsp(new AstText(nodep->fileline(), args, true));
             funcp->addStmtsp(newp);
         }
 
@@ -898,7 +901,7 @@ private:
         funcp->protect(false);
         funcp->pure(nodep->pure());
         // Add DPI Import to top, since it's a global function
-        m_topScopep->scopep()->addActivep(funcp);
+        m_topScopep->scopep()->addBlocksp(funcp);
         makePortList(nodep, funcp);
         return funcp;
     }
@@ -1055,18 +1058,19 @@ private:
         }
     }
 
-    AstVarScope* makeDpiExporTrigger() {
-        AstVarScope* dpiExportTriggerp = v3Global.rootp()->dpiExportTriggerp();
+    AstVarScope* getDpiExporTrigger() {
+        AstNetlist* const netlistp = v3Global.rootp();
+        AstVarScope* dpiExportTriggerp = netlistp->dpiExportTriggerp();
         if (!dpiExportTriggerp) {
             // Create the global DPI export trigger flag the first time we encounter a DPI export.
             // This flag is set any time a DPI export is invoked, and cleared at the end of eval.
             FileLine* const fl = m_topScopep->fileline();
-            AstVar* const varp
-                = new AstVar{fl, VVarType::VAR, "__Vdpi_export_trigger", VFlagBitPacked{}, 1};
-            m_topScopep->scopep()->modp()->addStmtp(varp);
+            const string name{"__Vdpi_export_trigger"};
+            AstVar* const varp = new AstVar{fl, VVarType::VAR, name, VFlagBitPacked{}, 1};
+            m_topScopep->scopep()->modp()->addStmtsp(varp);
             dpiExportTriggerp = new AstVarScope{fl, m_topScopep->scopep(), varp};
-            m_topScopep->scopep()->addVarp(dpiExportTriggerp);
-            v3Global.rootp()->dpiExportTriggerp(dpiExportTriggerp);
+            m_topScopep->scopep()->addVarsp(dpiExportTriggerp);
+            netlistp->dpiExportTriggerp(dpiExportTriggerp);
         }
         return dpiExportTriggerp;
     }
@@ -1133,7 +1137,7 @@ private:
         AstVarScope* rtnvscp = nullptr;
         if (rtnvarp) {
             rtnvscp = new AstVarScope(rtnvarp->fileline(), m_scopep, rtnvarp);
-            m_scopep->addVarp(rtnvscp);
+            m_scopep->addVarsp(rtnvscp);
             rtnvarp->user2p(rtnvscp);
         }
 
@@ -1227,7 +1231,7 @@ private:
                     }
                     AstVarScope* const newvscp
                         = new AstVarScope{portp->fileline(), m_scopep, portp};
-                    m_scopep->addVarp(newvscp);
+                    m_scopep->addVarsp(newvscp);
                     portp->user2p(newvscp);
                 }
             }
@@ -1270,52 +1274,37 @@ private:
             // Mark all non-local variables written by the DPI exported function as being updated
             // by DPI exports. This ensures correct ordering and change detection later.
 
-            // Gather non-local variables written by the exported function
-            std::vector<AstVarScope*> writtenps;
-            {
-                const VNUser5InUse user5InUse;  // AstVarScope::user5 -> Already added variable
-                cfuncp->foreach<AstVarRef>([&writtenps](AstVarRef* refp) {
-                    if (refp->access().isReadOnly()) return;  // Ignore read reference
-                    AstVarScope* const varScopep = refp->varScopep();
-                    if (varScopep->user5()) return;  // Ignore already added variable
-                    varScopep->user5(true);  // Mark as already added
-                    // Note: We are ignoring function locals as they should not be referenced
-                    // anywhere outside of the enclosing AstCFunc, and therefore they are
-                    // irrelevant for code ordering. This is an optimization to avoid adding
-                    // useless nodes to the ordering graph in V3Order.
-                    if (varScopep->varp()->isFuncLocal()) return;
-                    writtenps.push_back(varScopep);
-                });
-            }
+            // Mark non-local variables written by the exported function
+            bool writesNonLocals = false;
+            cfuncp->foreach([&writesNonLocals](AstVarRef* refp) {
+                if (refp->access().isReadOnly()) return;  // Ignore read reference
+                AstVar* const varp = refp->varScopep()->varp();
+                // We are ignoring function locals as they should not be referenced anywhere
+                // outside the enclosing AstCFunc, hence they are irrelevant for code ordering.
+                if (varp->isFuncLocal()) return;
+                // Mark it as written by DPI export
+                varp->setWrittenByDpi();
+                // Remember we had some
+                writesNonLocals = true;
+            });
 
-            if (!writtenps.empty()) {
-                AstVarScope* const dpiExportTriggerp = makeDpiExporTrigger();
-                FileLine* const fl = cfuncp->fileline();
+            // If this DPI export writes some non-local variables, set the DPI Export Trigger flag
+            // in the function.
+            if (writesNonLocals) {
+                AstVarScope* const dpiExportTriggerp = getDpiExporTrigger();
+                FileLine* const flp = cfuncp->fileline();
 
                 // Set DPI export trigger flag every time the DPI export is called.
                 AstAssign* const assignp
-                    = new AstAssign{fl, new AstVarRef{fl, dpiExportTriggerp, VAccess::WRITE},
-                                    new AstConst{fl, AstConst::BitTrue{}}};
+                    = new AstAssign{flp, new AstVarRef{flp, dpiExportTriggerp, VAccess::WRITE},
+                                    new AstConst{flp, AstConst::BitTrue{}}};
+
                 // Add as first statement (to avoid issues with early returns) to exported function
                 if (cfuncp->stmtsp()) {
                     cfuncp->stmtsp()->addHereThisAsNext(assignp);
                 } else {
                     cfuncp->addStmtsp(assignp);
                 }
-
-                // Add an always block sensitive to the DPI export trigger flag, and add an
-                // AstDpiExportUpdated node under it for each variable that are writen by the
-                // exported function.
-                AstAlways* const alwaysp = new AstAlways{
-                    fl, VAlwaysKwd::ALWAYS,
-                    new AstSenTree{
-                        fl, new AstSenItem{fl, VEdgeType::ET_HIGHEDGE,
-                                           new AstVarRef{fl, dpiExportTriggerp, VAccess::READ}}},
-                    nullptr};
-                for (AstVarScope* const varScopep : writtenps) {
-                    alwaysp->addStmtp(new AstDpiExportUpdated{fl, varScopep});
-                }
-                m_scopep->addActivep(alwaysp);
             }
         }
 
@@ -1365,7 +1354,7 @@ private:
     }
 
     // VISITORS
-    virtual void visit(AstNodeModule* nodep) override {
+    void visit(AstNodeModule* nodep) override {
         VL_RESTORER(m_modp);
         VL_RESTORER(m_modNCalls);
         {
@@ -1375,13 +1364,18 @@ private:
             iterateChildren(nodep);
         }
     }
-    virtual void visit(AstScope* nodep) override {
+    void visit(AstScope* nodep) override {
         m_scopep = nodep;
         m_insStmtp = nullptr;
         iterateChildren(nodep);
         m_scopep = nullptr;
     }
-    virtual void visit(AstNodeFTaskRef* nodep) override {
+    void visit(AstNodeFTaskRef* nodep) override {
+        if (m_inSensesp) {
+            nodep->v3warn(E_UNSUPPORTED, "Unsupported: function calls in sensitivity lists");
+            nodep->taskp(nullptr);  // So V3Broken doesn't complain
+            return;
+        }
         // Includes handling AstMethodCall, AstNew
         UASSERT_OBJ(nodep->taskp(), nodep, "Unlinked?");
         iterateIntoFTask(nodep->taskp());  // First, do hierarchical funcs
@@ -1435,7 +1429,7 @@ private:
         // Visit nodes that normal iteration won't find
         if (visitp) iterateAndNextNull(visitp);
     }
-    virtual void visit(AstNodeFTask* nodep) override {
+    void visit(AstNodeFTask* nodep) override {
         UINFO(4, " visitFTask   " << nodep << endl);
         VL_RESTORER(m_insMode);
         VL_RESTORER(m_insStmtp);
@@ -1503,7 +1497,7 @@ private:
             VL_DO_DANGLING(pushDeletep(nodep), nodep);
         }
     }
-    virtual void visit(AstWhile* nodep) override {
+    void visit(AstWhile* nodep) override {
         // Special, as statements need to be put in different places
         // Preconditions insert first just before themselves (the normal
         // rule for other statement types)
@@ -1515,16 +1509,16 @@ private:
         iterateAndNextNull(nodep->condp());
         // Body insert just before themselves
         m_insStmtp = nullptr;  // First thing should be new statement
-        iterateAndNextNull(nodep->bodysp());
+        iterateAndNextNull(nodep->stmtsp());
         iterateAndNextNull(nodep->incsp());
         // Done the loop
         m_insStmtp = nullptr;  // Next thing should be new statement
     }
-    virtual void visit(AstNodeFor* nodep) override {  // LCOV_EXCL_LINE
+    void visit(AstNodeFor* nodep) override {  // LCOV_EXCL_LINE
         nodep->v3fatalSrc(
             "For statements should have been converted to while statements in V3Begin.cpp");
     }
-    virtual void visit(AstNodeStmt* nodep) override {
+    void visit(AstNodeStmt* nodep) override {
         if (!nodep->isStatement()) {
             iterateChildren(nodep);
             return;
@@ -1534,8 +1528,14 @@ private:
         iterateChildren(nodep);
         m_insStmtp = nullptr;  // Next thing should be new statement
     }
+    void visit(AstSenItem* nodep) override {
+        UASSERT_OBJ(!m_inSensesp, nodep, "Senitem under senitem?");
+        VL_RESTORER(m_inSensesp);
+        m_inSensesp = true;
+        iterateChildren(nodep);
+    }
     //--------------------
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTORS
@@ -1543,7 +1543,7 @@ public:
         : m_statep{statep} {
         iterate(nodep);
     }
-    virtual ~TaskVisitor() override = default;
+    ~TaskVisitor() override = default;
 };
 
 //######################################################################
@@ -1813,5 +1813,5 @@ void V3Task::taskAll(AstNetlist* nodep) {
         TaskStateVisitor visitors{nodep};
         const TaskVisitor visitor{nodep, &visitors};
     }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("task", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 3);
+    V3Global::dumpCheckGlobalTree("task", 0, dumpTree() >= 3);
 }

@@ -17,10 +17,13 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3Assert.h"
+
 #include "V3Ast.h"
+#include "V3Global.h"
 #include "V3Stats.h"
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Assert class functions
@@ -44,6 +47,7 @@ private:
     VDouble0 m_statAsNotImm;  // Statistic tracking
     VDouble0 m_statAsImm;  // Statistic tracking
     VDouble0 m_statAsFull;  // Statistic tracking
+    bool m_inSampled = false;  // True inside a sampled expression
 
     // METHODS
     string assertDisplayMessage(AstNode* nodep, const string& prefix, const string& message) {
@@ -55,7 +59,7 @@ private:
         nodep->displayType(VDisplayType::DT_WRITE);
         nodep->fmtp()->text(assertDisplayMessage(nodep, prefix, nodep->fmtp()->text()));
         // cppcheck-suppress nullPointer
-        AstNode* const timenewp = new AstTime(nodep->fileline(), m_modp->timeunit());
+        AstNode* const timenewp = new AstTime{nodep->fileline(), m_modp->timeunit()};
         if (AstNode* const timesp = nodep->fmtp()->exprsp()) {
             timesp->unlinkFrBackWithNext();
             timenewp->addNext(timesp);
@@ -65,13 +69,18 @@ private:
             nodep->fmtp()->scopeNamep(new AstScopeName{nodep->fileline(), true});
         }
     }
+    AstSampled* newSampledExpr(AstNode* nodep) {
+        const auto sampledp = new AstSampled{nodep->fileline(), nodep};
+        sampledp->dtypeFrom(nodep);
+        return sampledp;
+    }
     AstVarRef* newMonitorNumVarRefp(AstNode* nodep, VAccess access) {
         if (!m_monitorNumVarp) {
             m_monitorNumVarp = new AstVar{nodep->fileline(), VVarType::MODULETEMP, "__VmonitorNum",
                                           nodep->findUInt64DType()};
-            v3Global.rootp()->dollarUnitPkgAddp()->addStmtp(m_monitorNumVarp);
+            v3Global.rootp()->dollarUnitPkgAddp()->addStmtsp(m_monitorNumVarp);
         }
-        const auto varrefp = new AstVarRef(nodep->fileline(), m_monitorNumVarp, access);
+        const auto varrefp = new AstVarRef{nodep->fileline(), m_monitorNumVarp, access};
         varrefp->classOrPackagep(v3Global.rootp()->dollarUnitPkgAddp());
         return varrefp;
     }
@@ -79,9 +88,9 @@ private:
         if (!m_monitorOffVarp) {
             m_monitorOffVarp = new AstVar{nodep->fileline(), VVarType::MODULETEMP, "__VmonitorOff",
                                           nodep->findBitDType()};
-            v3Global.rootp()->dollarUnitPkgAddp()->addStmtp(m_monitorOffVarp);
+            v3Global.rootp()->dollarUnitPkgAddp()->addStmtsp(m_monitorOffVarp);
         }
-        const auto varrefp = new AstVarRef(nodep->fileline(), m_monitorOffVarp, access);
+        const auto varrefp = new AstVarRef{nodep->fileline(), m_monitorOffVarp, access};
         varrefp->classOrPackagep(v3Global.rootp()->dollarUnitPkgAddp());
         return varrefp;
     }
@@ -89,16 +98,17 @@ private:
         // Add a internal if to check assertions are on.
         // Don't make this a AND term, as it's unlikely to need to test this.
         FileLine* const fl = nodep->fileline();
-        AstNode* const newp = new AstIf(
+        AstNodeIf* const newp = new AstIf{
             fl,
-            (force ? new AstConst(fl, AstConst::BitTrue())
+            (force ? new AstConst{fl, AstConst::BitTrue{}}
                    :  // If assertions are off, have constant propagation rip them out later
                  // This allows syntax errors and such to be detected normally.
                  (v3Global.opt.assertOn()
                       ? static_cast<AstNode*>(
-                          new AstCMath(fl, "vlSymsp->_vm_contextp__->assertOn()", 1))
-                      : static_cast<AstNode*>(new AstConst(fl, AstConst::BitFalse())))),
-            nodep);
+                          new AstCMath{fl, "vlSymsp->_vm_contextp__->assertOn()", 1})
+                      : static_cast<AstNode*>(new AstConst{fl, AstConst::BitFalse{}}))),
+            nodep};
+        newp->isBoundsCheck(true);  // To avoid LATCH warning
         newp->user1(true);  // Don't assert/cover this if
         return newp;
     }
@@ -106,11 +116,11 @@ private:
     AstNode* newFireAssertUnchecked(AstNode* nodep, const string& message) {
         // Like newFireAssert() but omits the asserts-on check
         AstDisplay* const dispp
-            = new AstDisplay(nodep->fileline(), VDisplayType::DT_ERROR, message, nullptr, nullptr);
+            = new AstDisplay{nodep->fileline(), VDisplayType::DT_ERROR, message, nullptr, nullptr};
         dispp->fmtp()->timeunit(m_modp->timeunit());
         AstNode* const bodysp = dispp;
         replaceDisplay(dispp, "%%Error");  // Convert to standard DISPLAY format
-        bodysp->addNext(new AstStop(nodep->fileline(), true));
+        bodysp->addNext(new AstStop{nodep->fileline(), true});
         return bodysp;
     }
 
@@ -146,7 +156,7 @@ private:
                 selfDestruct = true;
             } else {
                 // V3Coverage assigned us a bucket to increment.
-                AstCoverInc* const covincp = VN_AS(snodep->coverincp(), CoverInc);
+                AstCoverInc* const covincp = VN_AS(snodep->coverincsp(), CoverInc);
                 UASSERT_OBJ(covincp, snodep, "Missing AstCoverInc under assertion");
                 covincp->unlinkFrBackWithNext();  // next() might have  AstAssign for trace
                 if (message != "") covincp->declp()->comment(message);
@@ -154,7 +164,8 @@ private:
             }
 
             if (bodysp && passsp) bodysp = bodysp->addNext(passsp);
-            ifp = new AstIf(nodep->fileline(), propp, bodysp);
+            ifp = new AstIf{nodep->fileline(), propp, bodysp};
+            ifp->isBoundsCheck(true);  // To avoid LATCH warning
             bodysp = ifp;
         } else if (VN_IS(nodep, Assert) || VN_IS(nodep, AssertIntrinsic)) {
             if (nodep->immediate()) {
@@ -166,7 +177,8 @@ private:
             if (passsp) passsp = newIfAssertOn(passsp, force);
             if (failsp) failsp = newIfAssertOn(failsp, force);
             if (!failsp) failsp = newFireAssertUnchecked(nodep, "'assert' failed.");
-            ifp = new AstIf(nodep->fileline(), propp, passsp, failsp);
+            ifp = new AstIf{nodep->fileline(), propp, passsp, failsp};
+            ifp->isBoundsCheck(true);  // To avoid LATCH warning
             // It's more LIKELY that we'll take the nullptr if clause
             // than the sim-killing else clause:
             ifp->branchPred(VBranchPred::BP_LIKELY);
@@ -177,7 +189,7 @@ private:
 
         AstNode* newp;
         if (sentreep) {
-            newp = new AstAlways(nodep->fileline(), VAlwaysKwd::ALWAYS, sentreep, bodysp);
+            newp = new AstAlways{nodep->fileline(), VAlwaysKwd::ALWAYS, sentreep, bodysp};
         } else {
             newp = bodysp;
         }
@@ -195,7 +207,7 @@ private:
     }
 
     // VISITORS
-    virtual void visit(AstIf* nodep) override {
+    void visit(AstIf* nodep) override {
         if (nodep->user1SetOnce()) return;
         if (nodep->uniquePragma() || nodep->unique0Pragma()) {
             const AstNodeIf* ifp = nodep;
@@ -208,7 +220,7 @@ private:
                 iterateAndNextNull(ifp->condp());
 
                 // Recurse into the true case.
-                iterateAndNextNull(ifp->ifsp());
+                iterateAndNextNull(ifp->thensp());
 
                 // If the last else is not an else if, recurse into that too.
                 if (ifp->elsesp() && !nextifp) {  //
@@ -218,7 +230,7 @@ private:
                 // Build a bitmask of the true predicates
                 AstNode* const predp = ifp->condp()->cloneTree(false);
                 if (propp) {
-                    propp = new AstConcat(nodep->fileline(), predp, propp);
+                    propp = new AstConcat{nodep->fileline(), predp, propp};
                 } else {
                     propp = predp;
                 }
@@ -233,17 +245,18 @@ private:
             const bool allow_none = nodep->unique0Pragma();
 
             // Empty case means no property
-            if (!propp) propp = new AstConst(nodep->fileline(), AstConst::BitFalse());
+            if (!propp) propp = new AstConst{nodep->fileline(), AstConst::BitFalse{}};
 
             // Note: if this ends with an 'else', then we don't need to validate that one of the
             // predicates evaluates to true.
             AstNode* const ohot
                 = ((allow_none || hasDefaultElse)
-                       ? static_cast<AstNode*>(new AstOneHot0(nodep->fileline(), propp))
-                       : static_cast<AstNode*>(new AstOneHot(nodep->fileline(), propp)));
+                       ? static_cast<AstNode*>(new AstOneHot0{nodep->fileline(), propp})
+                       : static_cast<AstNode*>(new AstOneHot{nodep->fileline(), propp}));
             AstIf* const checkifp
-                = new AstIf(nodep->fileline(), new AstLogNot(nodep->fileline(), ohot),
-                            newFireAssert(nodep, "'unique if' statement violated"), newifp);
+                = new AstIf{nodep->fileline(), new AstLogNot{nodep->fileline(), ohot},
+                            newFireAssert(nodep, "'unique if' statement violated"), newifp};
+            checkifp->isBoundsCheck(true);  // To avoid LATCH warning
             checkifp->branchPred(VBranchPred::BP_UNLIKELY);
             nodep->replaceWith(checkifp);
             pushDeletep(nodep);
@@ -253,7 +266,7 @@ private:
     }
 
     //========== Case assertions
-    virtual void visit(AstCase* nodep) override {
+    void visit(AstCase* nodep) override {
         iterateChildren(nodep);
         if (!nodep->user1SetOnce()) {
             bool has_default = false;
@@ -265,9 +278,9 @@ private:
                 // Need to add a default if there isn't one already
                 ++m_statAsFull;
                 if (!has_default) {
-                    nodep->addItemsp(new AstCaseItem(
+                    nodep->addItemsp(new AstCaseItem{
                         nodep->fileline(), nullptr /*DEFAULT*/,
-                        newFireAssert(nodep, "synthesis full_case, but non-match found")));
+                        newFireAssert(nodep, "synthesis full_case, but non-match found")});
                 }
             }
             if (nodep->parallelPragma() || nodep->uniquePragma() || nodep->unique0Pragma()) {
@@ -296,24 +309,25 @@ private:
                                                        icondp->cloneTree(false));
                             }
                             if (propp) {
-                                propp = new AstConcat(icondp->fileline(), onep, propp);
+                                propp = new AstConcat{icondp->fileline(), onep, propp};
                             } else {
                                 propp = onep;
                             }
                         }
                     }
                     // Empty case means no property
-                    if (!propp) propp = new AstConst(nodep->fileline(), AstConst::BitFalse());
+                    if (!propp) propp = new AstConst{nodep->fileline(), AstConst::BitFalse{}};
 
                     const bool allow_none = has_default || nodep->unique0Pragma();
                     AstNode* const ohot
                         = (allow_none
-                               ? static_cast<AstNode*>(new AstOneHot0(nodep->fileline(), propp))
-                               : static_cast<AstNode*>(new AstOneHot(nodep->fileline(), propp)));
-                    AstIf* const ifp = new AstIf(
-                        nodep->fileline(), new AstLogNot(nodep->fileline(), ohot),
+                               ? static_cast<AstNode*>(new AstOneHot0{nodep->fileline(), propp})
+                               : static_cast<AstNode*>(new AstOneHot{nodep->fileline(), propp}));
+                    AstIf* const ifp = new AstIf{
+                        nodep->fileline(), new AstLogNot{nodep->fileline(), ohot},
                         newFireAssert(nodep,
-                                      "synthesis parallel_case, but multiple matches found"));
+                                      "synthesis parallel_case, but multiple matches found")};
+                    ifp->isBoundsCheck(true);  // To avoid LATCH warning
                     ifp->branchPred(VBranchPred::BP_UNLIKELY);
                     nodep->addNotParallelp(ifp);
                 }
@@ -322,7 +336,7 @@ private:
     }
 
     //========== Past
-    virtual void visit(AstPast* nodep) override {
+    void visit(AstPast* nodep) override {
         iterateChildren(nodep);
         uint32_t ticks = 1;
         if (nodep->ticksp()) {
@@ -331,34 +345,66 @@ private:
             ticks = VN_AS(nodep->ticksp(), Const)->toUInt();
         }
         UASSERT_OBJ(ticks >= 1, nodep, "0 tick should have been checked in V3Width");
-        AstNode* inp = nodep->exprp()->unlinkFrBack();
+        AstNode* const exprp = nodep->exprp()->unlinkFrBack();
+        AstNode* inp = newSampledExpr(exprp);
         AstVar* invarp = nullptr;
         AstSenTree* const sentreep = nodep->sentreep();
         sentreep->unlinkFrBack();
         AstAlways* const alwaysp
-            = new AstAlways(nodep->fileline(), VAlwaysKwd::ALWAYS, sentreep, nullptr);
-        m_modp->addStmtp(alwaysp);
+            = new AstAlways{nodep->fileline(), VAlwaysKwd::ALWAYS, sentreep, nullptr};
+        m_modp->addStmtsp(alwaysp);
         for (uint32_t i = 0; i < ticks; ++i) {
-            AstVar* const outvarp = new AstVar(
+            AstVar* const outvarp = new AstVar{
                 nodep->fileline(), VVarType::MODULETEMP,
-                "_Vpast_" + cvtToStr(m_modPastNum++) + "_" + cvtToStr(i), inp->dtypep());
-            m_modp->addStmtp(outvarp);
-            AstNode* const assp = new AstAssignDly(
-                nodep->fileline(), new AstVarRef(nodep->fileline(), outvarp, VAccess::WRITE), inp);
-            alwaysp->addStmtp(assp);
+                "_Vpast_" + cvtToStr(m_modPastNum++) + "_" + cvtToStr(i), inp->dtypep()};
+            m_modp->addStmtsp(outvarp);
+            AstNode* const assp = new AstAssignDly{
+                nodep->fileline(), new AstVarRef{nodep->fileline(), outvarp, VAccess::WRITE}, inp};
+            alwaysp->addStmtsp(assp);
             // if (debug() >= 9) assp->dumpTree(cout, "-ass: ");
             invarp = outvarp;
-            inp = new AstVarRef(nodep->fileline(), invarp, VAccess::READ);
+            inp = new AstVarRef{nodep->fileline(), invarp, VAccess::READ};
         }
         nodep->replaceWith(inp);
     }
-    virtual void visit(AstSampled* nodep) override {
+
+    //========== Move $sampled down to read-only variables
+    void visit(AstSampled* nodep) override {
+        if (nodep->user1()) return;
+        VL_RESTORER(m_inSampled);
+        {
+            m_inSampled = true;
+            iterateChildren(nodep);
+        }
         nodep->replaceWith(nodep->exprp()->unlinkFrBack());
         VL_DO_DANGLING(pushDeletep(nodep), nodep);
     }
+    void visit(AstVarRef* nodep) override {
+        iterateChildren(nodep);
+        if (m_inSampled) {
+            if (!nodep->access().isReadOnly()) {
+                nodep->v3warn(E_UNSUPPORTED,
+                              "Unsupported: Write to variable in sampled expression");
+            } else {
+                VNRelinker relinkHandle;
+                nodep->unlinkFrBack(&relinkHandle);
+                AstSampled* const newp = newSampledExpr(nodep);
+                relinkHandle.relink(newp);
+                newp->user1(1);
+            }
+        }
+    }
+    // Don't sample sensitivities
+    void visit(AstSenItem* nodep) override {
+        VL_RESTORER(m_inSampled);
+        {
+            m_inSampled = false;
+            iterateChildren(nodep);
+        }
+    }
 
     //========== Statements
-    virtual void visit(AstDisplay* nodep) override {
+    void visit(AstDisplay* nodep) override {
         iterateChildren(nodep);
         // Replace the special types with standard text
         if (nodep->displayType() == VDisplayType::DT_INFO) {
@@ -384,9 +430,10 @@ private:
                               new AstEq{fl, new AstConst{fl, monNum},
                                         newMonitorNumVarRefp(nodep, VAccess::READ)}},
                 stmtsp};
+            ifp->isBoundsCheck(true);  // To avoid LATCH warning
             ifp->branchPred(VBranchPred::BP_UNLIKELY);
-            AstNode* const newp = new AstAlwaysPostponed{fl, ifp};
-            m_modp->addStmtp(newp);
+            AstNode* const newp = new AstAlways{fl, VAlwaysKwd::ALWAYS, nullptr, ifp};
+            m_modp->addStmtsp(newp);
         } else if (nodep->displayType() == VDisplayType::DT_STROBE) {
             nodep->displayType(VDisplayType::DT_DISPLAY);
             // Need one-shot
@@ -394,7 +441,7 @@ private:
             const auto varp
                 = new AstVar{fl, VVarType::MODULETEMP, "__Vstrobe" + cvtToStr(m_modStrobeNum++),
                              nodep->findBitDType()};
-            m_modp->addStmtp(varp);
+            m_modp->addStmtsp(varp);
             // Where $strobe was we do "__Vstrobe = '1;"
             const auto newsetp = new AstAssign{fl, new AstVarRef{fl, varp, VAccess::WRITE},
                                                new AstConst{fl, AstConst::BitTrue{}}};
@@ -402,39 +449,40 @@ private:
             // Add "always_comb if (__Vstrobe) begin $display(...); __Vstrobe = '0; end"
             AstNode* const stmtsp = nodep;
             AstIf* const ifp = new AstIf{fl, new AstVarRef{fl, varp, VAccess::READ}, stmtsp};
+            ifp->isBoundsCheck(true);  // To avoid LATCH warning
             ifp->branchPred(VBranchPred::BP_UNLIKELY);
             AstNode* const newp = new AstAlwaysPostponed{fl, ifp};
             stmtsp->addNext(new AstAssign{fl, new AstVarRef{fl, varp, VAccess::WRITE},
                                           new AstConst{fl, AstConst::BitFalse{}}});
-            m_modp->addStmtp(newp);
+            m_modp->addStmtsp(newp);
         }
     }
-    virtual void visit(AstMonitorOff* nodep) override {
+    void visit(AstMonitorOff* nodep) override {
         const auto newp
-            = new AstAssign(nodep->fileline(), newMonitorOffVarRefp(nodep, VAccess::WRITE),
-                            new AstConst(nodep->fileline(), AstConst::BitTrue{}, nodep->off()));
+            = new AstAssign{nodep->fileline(), newMonitorOffVarRefp(nodep, VAccess::WRITE),
+                            new AstConst{nodep->fileline(), AstConst::BitTrue{}, nodep->off()}};
         nodep->replaceWith(newp);
         VL_DO_DANGLING(pushDeletep(nodep), nodep);
     }
-    virtual void visit(AstAssert* nodep) override {
+    void visit(AstAssert* nodep) override {
         iterateChildren(nodep);
         newPslAssertion(nodep, nodep->failsp());
     }
-    virtual void visit(AstAssertIntrinsic* nodep) override {
+    void visit(AstAssertIntrinsic* nodep) override {
         iterateChildren(nodep);
         newPslAssertion(nodep, nodep->failsp());
     }
-    virtual void visit(AstCover* nodep) override {
+    void visit(AstCover* nodep) override {
         iterateChildren(nodep);
         newPslAssertion(nodep, nullptr);
     }
-    virtual void visit(AstRestrict* nodep) override {
+    void visit(AstRestrict* nodep) override {
         iterateChildren(nodep);
         // IEEE says simulator ignores these
         VL_DO_DANGLING(pushDeletep(nodep->unlinkFrBack()), nodep);
     }
 
-    virtual void visit(AstNodeModule* nodep) override {
+    void visit(AstNodeModule* nodep) override {
         VL_RESTORER(m_modp);
         VL_RESTORER(m_modPastNum);
         VL_RESTORER(m_modStrobeNum);
@@ -445,7 +493,7 @@ private:
             iterateChildren(nodep);
         }
     }
-    virtual void visit(AstBegin* nodep) override {
+    void visit(AstBegin* nodep) override {
         // This code is needed rather than a visitor in V3Begin,
         // because V3Assert is called before V3Begin
         VL_RESTORER(m_beginp);
@@ -455,12 +503,12 @@ private:
         }
     }
 
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTORS
     explicit AssertVisitor(AstNetlist* nodep) { iterate(nodep); }
-    virtual ~AssertVisitor() override {
+    ~AssertVisitor() override {
         V3Stats::addStat("Assertions, assert non-immediate statements", m_statAsNotImm);
         V3Stats::addStat("Assertions, assert immediate statements", m_statAsImm);
         V3Stats::addStat("Assertions, cover statements", m_statCover);
@@ -474,5 +522,5 @@ public:
 void V3Assert::assertAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ": " << endl);
     { AssertVisitor{nodep}; }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("assert", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 3);
+    V3Global::dumpCheckGlobalTree("assert", 0, dumpTree() >= 3);
 }

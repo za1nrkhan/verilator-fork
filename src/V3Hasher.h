@@ -23,8 +23,8 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Error.h"
 #include "V3Ast.h"
+#include "V3Error.h"
 #include "V3Hash.h"
 
 //============================================================================
@@ -40,7 +40,6 @@ public:
     ~V3Hasher() = default;
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     // Compute hash of node. This method caches the hash in the node's user4().
     V3Hash operator()(AstNode* nodep) const;

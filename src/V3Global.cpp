@@ -18,6 +18,7 @@
 #include "verilatedos.h"
 
 #include "V3Global.h"
+
 #include "V3Ast.h"
 #include "V3File.h"
 #include "V3HierBlock.h"
@@ -27,9 +28,12 @@
 #include "V3Stats.h"
 
 //######################################################################
-// V3 Class -- top level
+// V3Global
 
-AstNetlist* V3Global::makeNetlist() { return new AstNetlist(); }
+void V3Global::boot() {
+    UASSERT(!m_rootp, "call once");
+    m_rootp = new AstNetlist;
+}
 
 void V3Global::clear() {
 #ifdef VL_LEAK_CHECK
@@ -89,8 +93,11 @@ string V3Global::digitsFilename(int number) {
 }
 
 void V3Global::dumpCheckGlobalTree(const string& stagename, int newNumber, bool doDump) {
-    v3Global.rootp()->dumpTreeFile(v3Global.debugFilename(stagename + ".tree", newNumber), false,
-                                   doDump);
+    const string treeFilename = v3Global.debugFilename(stagename + ".tree", newNumber);
+    v3Global.rootp()->dumpTreeFile(treeFilename, false, doDump);
+    if (v3Global.opt.dumpTreeDot()) {
+        v3Global.rootp()->dumpTreeDotFile(treeFilename + ".dot", false, doDump);
+    }
     if (v3Global.opt.stats()) V3Stats::statsStage(stagename);
 }
 

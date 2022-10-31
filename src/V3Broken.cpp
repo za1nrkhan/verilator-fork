@@ -25,15 +25,18 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3Broken.h"
+
 #include "V3Ast.h"
+#include "V3Global.h"
 
 // This visitor does not edit nodes, and is called at error-exit, so should use constant iterators
 #include "V3AstConstOnly.h"
 
 #include <unordered_map>
 #include <unordered_set>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Generation counter for AstNode::m_brokenState
@@ -48,7 +51,7 @@ static class BrokenCntGlobal {
     uint8_t m_count = MIN_VALUE;
 
 public:
-    uint8_t get() {
+    uint8_t get() const VL_MT_SAFE {
         UASSERT(MIN_VALUE <= m_count && m_count <= MAX_VALUE, "Invalid generation number");
         return m_count;
     }
@@ -131,8 +134,8 @@ private:
 public:
     // METHODS
     void clear() { m_linkable.clear(); }
-    inline void addLinkable(const AstNode* nodep) { m_linkable.emplace(nodep); }
-    inline bool isLinkable(const AstNode* nodep) const { return m_linkable.count(nodep) != 0; }
+    void addLinkable(const AstNode* nodep) { m_linkable.emplace(nodep); }
+    bool isLinkable(const AstNode* nodep) const { return m_linkable.count(nodep) != 0; }
 } s_linkableTable;
 
 bool V3Broken::isLinkable(const AstNode* nodep) { return s_linkableTable.isLinkable(nodep); }
@@ -213,27 +216,27 @@ private:
         }
         return false;
     }
-    virtual void visit(AstNodeAssign* nodep) override {
+    void visit(AstNodeAssign* nodep) override {
         processAndIterate(nodep);
         UASSERT_OBJ(!(v3Global.assertDTypesResolved() && nodep->brokeLhsMustBeLvalue()
                       && VN_IS(nodep->lhsp(), NodeVarRef)
                       && !VN_AS(nodep->lhsp(), NodeVarRef)->access().isWriteOrRW()),
                     nodep, "Assignment LHS is not an lvalue");
     }
-    virtual void visit(AstRelease* nodep) override {
+    void visit(AstRelease* nodep) override {
         processAndIterate(nodep);
         UASSERT_OBJ(!(v3Global.assertDTypesResolved() && VN_IS(nodep->lhsp(), NodeVarRef)
                       && !VN_AS(nodep->lhsp(), NodeVarRef)->access().isWriteOrRW()),
                     nodep, "Release LHS is not an lvalue");
     }
-    virtual void visit(AstScope* nodep) override {
+    void visit(AstScope* nodep) override {
         VL_RESTORER(m_inScope);
         {
             m_inScope = true;
             processAndIterate(nodep);
         }
     }
-    virtual void visit(AstNodeVarRef* nodep) override {
+    void visit(AstNodeVarRef* nodep) override {
         processAndIterate(nodep);
         // m_inScope because some Vars have initial variable references without scopes
         // This might false fire with some debug flags, as not certain we don't have temporary
@@ -251,7 +254,7 @@ private:
             }
         }
     }
-    virtual void visit(AstCFunc* nodep) override {
+    void visit(AstCFunc* nodep) override {
         UASSERT_OBJ(!m_cfuncp, nodep, "Nested AstCFunc");
         m_cfuncp = nodep;
         m_localVars.clear();
@@ -269,14 +272,14 @@ private:
 
         m_cfuncp = nullptr;
     }
-    virtual void visit(AstNodeIf* nodep) override {
+    void visit(AstNodeIf* nodep) override {
         // Each branch is a separate local variable scope
         pushLocalScope();
         processEnter(nodep);
         processAndIterate(nodep->condp());
-        if (AstNode* const ifsp = nodep->ifsp()) {
+        if (AstNode* const thensp = nodep->thensp()) {
             pushLocalScope();
-            processAndIterateList(ifsp);
+            processAndIterateList(thensp);
             popLocalScope();
         }
         if (AstNode* const elsesp = nodep->elsesp()) {
@@ -287,21 +290,21 @@ private:
         processExit(nodep);
         popLocalScope();
     }
-    virtual void visit(AstNodeStmt* nodep) override {
+    void visit(AstNodeStmt* nodep) override {
         // For local variable checking act as if any statement introduces a new scope.
         // This is aggressive but conservatively correct.
         pushLocalScope();
         processAndIterate(nodep);
         popLocalScope();
     }
-    virtual void visit(AstVar* nodep) override {
+    void visit(AstVar* nodep) override {
         processAndIterate(nodep);
         if (m_cfuncp) {
             m_localVars.insert(nodep);
             m_localsStack.back().insert(nodep);
         }
     }
-    virtual void visit(AstNode* nodep) override {
+    void visit(AstNode* nodep) override {
         // Process not just iterate
         processAndIterate(nodep);
     }
@@ -309,7 +312,7 @@ private:
 public:
     // CONSTRUCTORS
     explicit BrokenCheckVisitor(AstNetlist* nodep) { iterate(nodep); }
-    virtual ~BrokenCheckVisitor() override = default;
+    ~BrokenCheckVisitor() override = default;
 };
 
 //######################################################################
@@ -326,7 +329,7 @@ void V3Broken::brokenAll(AstNetlist* nodep) {
 
         // Mark every node in the tree
         const uint8_t brokenCntCurrent = s_brokenCntGlobal.get();
-        nodep->foreach<AstNode>([brokenCntCurrent](AstNode* nodep) {
+        nodep->foreach([brokenCntCurrent](AstNode* nodep) {
 #ifdef VL_LEAK_CHECKS
             UASSERT_OBJ(s_allocTable.isAllocated(nodep), nodep,
                         "AstNode is in tree, but not allocated");

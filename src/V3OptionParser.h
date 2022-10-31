@@ -65,7 +65,8 @@ private:
 
     // METHODS
     ActionIfs* find(const char* optp);
-    template <class ACT, class ARG> ActionIfs& add(const string& opt, ARG arg);
+    template <class ACT, class ARG>
+    ActionIfs& add(const string& opt, ARG arg);
     static bool hasPrefixFNo(const char* strp);  // Returns true if strp starts with "-fno"
     static bool hasPrefixNo(const char* strp);  // Returns true if strp starts with "-no"
 
@@ -108,7 +109,8 @@ public:
     struct Set {};  // For ActionSet
 
     struct CbCall {};  // For ActionCbCall
-    struct CbOnOff {};  // For ActionOnOff of ActionFOnOff
+    struct CbFOnOff {};  // For ActionCbFOnOff
+    struct CbOnOff {};  // For ActionCbOnOff
     struct CbPartialMatch {};  // For ActionCbPartialMatch
     struct CbPartialMatchVal {};  // For ActionCbPartialMatchVal
     struct CbVal {};  // For ActionCbVal
@@ -133,6 +135,7 @@ public:
 #endif
 
     ActionIfs& operator()(const char* optp, CbCall, std::function<void(void)>) const;
+    ActionIfs& operator()(const char* optp, CbFOnOff, std::function<void(bool)>) const;
     ActionIfs& operator()(const char* optp, CbOnOff, std::function<void(bool)>) const;
     ActionIfs& operator()(const char* optp, CbVal, std::function<void(int)>) const;
     ActionIfs& operator()(const char* optp, CbVal, std::function<void(const char*)>) const;
@@ -152,6 +155,7 @@ public:
     const auto FOnOff VL_ATTR_UNUSED = V3OptionParser::AppendHelper::FOnOff{}; \
     const auto OnOff VL_ATTR_UNUSED = V3OptionParser::AppendHelper::OnOff{}; \
     const auto CbCall VL_ATTR_UNUSED = V3OptionParser::AppendHelper::CbCall{}; \
+    const auto CbFOnOff VL_ATTR_UNUSED = V3OptionParser::AppendHelper::CbFOnOff{}; \
     const auto CbOnOff VL_ATTR_UNUSED = V3OptionParser::AppendHelper::CbOnOff{}; \
     const auto CbPartialMatch VL_ATTR_UNUSED = V3OptionParser::AppendHelper::CbPartialMatch{}; \
     const auto CbPartialMatchVal VL_ATTR_UNUSED \

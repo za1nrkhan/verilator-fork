@@ -15,25 +15,26 @@
 
 #else
 
-#include "Vt_vpi_var.h"
 #include "verilated.h"
-#include "svdpi.h"
-
-#include "Vt_vpi_var__Dpi.h"
-
-#include "verilated_vpi.h"
 #include "verilated_vcd_c.h"
+#include "verilated_vpi.h"
+
+#include "Vt_vpi_var.h"
+#include "Vt_vpi_var__Dpi.h"
+#include "svdpi.h"
 
 #endif
 
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 
+// These require the above. Comment prevents clang-format moving them
 #include "TestSimulator.h"
 #include "TestVpi.h"
 
+int errors = 0;
 // __FILE__ is too long
 #define FILENM "t_vpi_var.cpp"
 
@@ -89,7 +90,7 @@ bool verbose = false;
     }
 
 #define CHECK_RESULT_CSTR(got, exp) \
-    if (strcmp((got), (exp))) { \
+    if (std::strcmp((got), (exp))) { \
         printf("%%Error: %s:%d: GOT = '%s'   EXP = '%s'\n", FILENM, __LINE__, \
                ((got) != NULL) ? (got) : "<null>", ((exp) != NULL) ? (exp) : "<null>"); \
         return __LINE__; \
@@ -116,7 +117,7 @@ int _mon_check_mcd() {
     }
 
     status = vpi_mcd_printf(mcd, (PLI_BYTE8*)"hello %s", "vpi_mcd_printf");
-    CHECK_RESULT(status, strlen("hello vpi_mcd_printf"));
+    CHECK_RESULT(status, std::strlen("hello vpi_mcd_printf"));
 
     status = vpi_mcd_printf(0, (PLI_BYTE8*)"empty");
     CHECK_RESULT(status, 0);
@@ -535,7 +536,7 @@ int _mon_check_putget_str(p_cb_data cb_data) {
                     CHECK_RESULT_CSTR(v.value.str, data[i].str.c_str());
                 } else {
                     data[i].type = v.format;
-                    data[i].str = std::string(v.value.str);
+                    data[i].str = std::string{v.value.str};
                 }
             }
 
@@ -633,7 +634,7 @@ int _mon_check_vlog_info() {
     CHECK_RESULT_Z(vlog_info.argv[4]);
     if (TestSimulator::is_verilator()) {
         CHECK_RESULT_CSTR(vlog_info.product, "Verilator");
-        CHECK_RESULT(strlen(vlog_info.version) > 0, 1);
+        CHECK_RESULT(std::strlen(vlog_info.version) > 0, 1);
     }
     return 0;
 }

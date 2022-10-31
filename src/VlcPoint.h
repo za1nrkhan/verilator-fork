@@ -20,14 +20,15 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include <vector>
 #include <iomanip>
 #include <map>
 #include <unordered_map>
+#include <vector>
 
 #define V3ERROR_NO_GLOBAL_
-#include "V3Error.h"
 #include "verilated_cov_key.h"
+
+#include "V3Error.h"
 
 //********************************************************************
 // VlcPoint - A coverage point (across all tests)
@@ -100,6 +101,8 @@ private:
     NameMap m_nameMap;  //< Name to point-number
     std::vector<VlcPoint> m_points;  //< List of all points
     uint64_t m_numPoints = 0;  //< Total unique points
+
+    static int debug() { return V3Error::debugDefault(); }
 
 public:
     // ITERATORS

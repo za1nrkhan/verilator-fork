@@ -48,7 +48,8 @@ class V3HierBlockPlan;
 
 // Object used by VL_RESTORER.  This object must be an auto variable, not
 // allocated on the heap or otherwise.
-template <typename T> class VRestorer {
+template <typename T>
+class VRestorer final {
     T& m_ref;  // Reference to object we're saving and restoring
     const T m_saved;  // Value saved, for later restore
 
@@ -69,19 +70,19 @@ public:
     VWidthMinUsage()
         : m_e{LINT_WIDTH} {}
     // cppcheck-suppress noExplicitConstructor
-    VWidthMinUsage(en _e)
+    constexpr VWidthMinUsage(en _e)
         : m_e{_e} {}
     explicit VWidthMinUsage(int _e)
         : m_e(static_cast<en>(_e)) {}  // Need () or GCC 4.8 false warning
-    operator en() const { return m_e; }
+    constexpr operator en() const { return m_e; }
 };
-inline bool operator==(const VWidthMinUsage& lhs, const VWidthMinUsage& rhs) {
+constexpr bool operator==(const VWidthMinUsage& lhs, const VWidthMinUsage& rhs) {
     return lhs.m_e == rhs.m_e;
 }
-inline bool operator==(const VWidthMinUsage& lhs, VWidthMinUsage::en rhs) {
+constexpr bool operator==(const VWidthMinUsage& lhs, VWidthMinUsage::en rhs) {
     return lhs.m_e == rhs;
 }
-inline bool operator==(VWidthMinUsage::en lhs, const VWidthMinUsage& rhs) {
+constexpr bool operator==(VWidthMinUsage::en lhs, const VWidthMinUsage& rhs) {
     return lhs == rhs.m_e;
 }
 
@@ -104,6 +105,9 @@ class V3Global final {
     // Experimenting with always requiring heavy, see (#2701)
     bool m_needTraceDumper = false;  // Need __Vm_dumperp in symbols
     bool m_dpi = false;  // Need __Dpi include files
+    bool m_hasEvents = false;  // Design uses SystemVerilog named events
+    bool m_hasClasses = false;  // Design uses SystemVerilog classes
+    bool m_usesTiming = false;  // Design uses timing constructs
     bool m_hasForceableSignals = false;  // Need to apply V3Force pass
     bool m_hasSCTextSections = false;  // Has `systemc_* sections that need to be emitted
     bool m_useParallelBuild = false;  // Use parallel build for model
@@ -119,15 +123,11 @@ public:
 
     // CONSTRUCTORS
     V3Global() {}
-    AstNetlist* makeNetlist();
-    void boot() {
-        UASSERT(!m_rootp, "call once");
-        m_rootp = makeNetlist();
-    }
+    void boot();
     void clear();
     void shutdown();  // Release allocated resorces
     // ACCESSORS (general)
-    AstNetlist* rootp() const { return m_rootp; }
+    AstNetlist* rootp() const VL_MT_SAFE { return m_rootp; }
     VWidthMinUsage widthMinUsage() const { return m_widthMinUsage; }
     bool assertDTypesResolved() const { return m_assertDTypesResolved; }
     bool assertScoped() const { return m_assertScoped; }
@@ -146,11 +146,17 @@ public:
     static string digitsFilename(int number);
     bool needTraceDumper() const { return m_needTraceDumper; }
     void needTraceDumper(bool flag) { m_needTraceDumper = flag; }
-    bool dpi() const { return m_dpi; }
+    bool dpi() const VL_MT_SAFE { return m_dpi; }
     void dpi(bool flag) { m_dpi = flag; }
+    bool hasEvents() const { return m_hasEvents; }
+    void setHasEvents() { m_hasEvents = true; }
+    bool hasClasses() const { return m_hasClasses; }
+    void setHasClasses() { m_hasClasses = true; }
+    bool usesTiming() const { return m_usesTiming; }
+    void setUsesTiming() { m_usesTiming = true; }
     bool hasForceableSignals() const { return m_hasForceableSignals; }
     void setHasForceableSignals() { m_hasForceableSignals = true; }
-    bool hasSCTextSections() const { return m_hasSCTextSections; }
+    bool hasSCTextSections() const VL_MT_SAFE { return m_hasSCTextSections; }
     void setHasSCTextSections() { m_hasSCTextSections = true; }
     V3HierBlockPlan* hierPlanp() const { return m_hierPlanp; }
     void hierPlanp(V3HierBlockPlan* plan) {

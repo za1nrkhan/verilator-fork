@@ -17,11 +17,14 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
+#include "V3EmitMk.h"
+
+#include "V3EmitCBase.h"
 #include "V3Global.h"
 #include "V3HierBlock.h"
 #include "V3Os.h"
-#include "V3EmitMk.h"
-#include "V3EmitCBase.h"
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Emit statements and math operators
@@ -29,7 +32,6 @@
 class EmitMk final {
 public:
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     void putMakeClassEntry(V3OutMkFile& of, const string& name) {
         of.puts("\t" + V3Os::filenameNonDirExt(name) + " \\\n");
@@ -49,6 +51,10 @@ public:
         of.puts("\n### Switches...\n");
         of.puts("# C11 constructs required?  0/1 (always on now)\n");
         of.puts("VM_C11 = 1\n");
+        of.puts("# Timing enabled?  0/1\n");
+        of.puts("VM_TIMING = ");
+        of.puts(v3Global.usesTiming() ? "1" : "0");
+        of.puts("\n");
         of.puts("# Coverage output mode?  0/1 (from --coverage)\n");
         of.puts("VM_COVERAGE = ");
         of.puts(v3Global.opt.coverage() ? "1" : "0");
@@ -72,15 +78,6 @@ public:
         of.puts("# Tracing output mode in FST format?  0/1 (from --trace-fst)\n");
         of.puts("VM_TRACE_FST = ");
         of.puts(v3Global.opt.trace() && v3Global.opt.traceFormat().fst() ? "1" : "0");
-        of.puts("\n");
-        of.puts(
-            "# Tracing threaded output mode?  0/1/N threads (from --threads/--trace-thread)\n");
-        of.puts("VM_TRACE_THREADS = ");
-        of.puts(cvtToStr(v3Global.opt.vmTraceThreads()));
-        of.puts("\n");
-        of.puts("# Separate FST writer thread? 0/1 (from --trace-fst with --trace-thread > 0)\n");
-        of.puts("VM_TRACE_FST_WRITER_THREAD = ");
-        of.puts(v3Global.opt.traceThreads() && v3Global.opt.traceFormat().fst() ? "1" : "0");
         of.puts("\n");
 
         of.puts("\n### Object file lists...\n");
@@ -116,7 +113,8 @@ public:
                             putMakeClassEntry(of, v3Global.opt.traceSourceLang() + ".cpp");
                         }
                     }
-                    if (v3Global.opt.mtasks()) putMakeClassEntry(of, "verilated_threads.cpp");
+                    if (v3Global.usesTiming()) putMakeClassEntry(of, "verilated_timing.cpp");
+                    if (v3Global.opt.threads()) putMakeClassEntry(of, "verilated_threads.cpp");
                     if (v3Global.opt.usesProfiler()) {
                         putMakeClassEntry(of, "verilated_profiler.cpp");
                     }
@@ -300,7 +298,7 @@ class EmitMkHierVerilation final {
         of.puts("# Verilation of hierarchical blocks are executed in this directory\n");
         of.puts("VM_HIER_RUN_DIR := " + cwd + "\n");
         of.puts("# Common options for hierarchical blocks\n");
-        const string fullpath_bin = V3Os::filenameRealPath(v3Global.opt.bin());
+        const string fullpath_bin = V3Os::filenameRealPath(v3Global.opt.buildDepBin());
         const string verilator_wrapper = V3Os::filenameDir(fullpath_bin) + "/verilator";
         of.puts("VM_HIER_VERILATOR := " + verilator_wrapper + "\n");
         of.puts("VM_HIER_INPUT_FILES := \\\n");
@@ -369,13 +367,13 @@ class EmitMkHierVerilation final {
 
         // Rules to process hierarchical blocks
         of.puts("\n# Verilate hierarchical blocks\n");
-        for (V3HierBlockPlan::const_iterator it = m_planp->begin(); it != m_planp->end(); ++it) {
-            const string prefix = it->second->hierPrefix();
-            const string argsFile = it->second->commandArgsFileName(false);
-            of.puts(it->second->hierGenerated(true));
+        for (const V3HierBlock* const blockp : m_planp->hierBlocksSorted()) {
+            const string prefix = blockp->hierPrefix();
+            const string argsFile = blockp->commandArgsFileName(false);
+            of.puts(blockp->hierGenerated(true));
             of.puts(": $(VM_HIER_INPUT_FILES) $(VM_HIER_VERILOG_LIBS) ");
             of.puts(V3Os::filenameNonDir(argsFile) + " ");
-            const V3HierBlock::HierBlockSet& children = it->second->children();
+            const V3HierBlock::HierBlockSet& children = blockp->children();
             for (V3HierBlock::HierBlockSet::const_iterator child = children.begin();
                  child != children.end(); ++child) {
                 of.puts((*child)->hierWrapper(true) + " ");
@@ -384,16 +382,16 @@ class EmitMkHierVerilation final {
             emitLaunchVerilator(of, argsFile);
 
             // Rule to build lib*.a
-            of.puts(it->second->hierLib(true));
+            of.puts(blockp->hierLib(true));
             of.puts(": ");
-            of.puts(it->second->hierMk(true));
+            of.puts(blockp->hierMk(true));
             of.puts(" ");
             for (V3HierBlock::HierBlockSet::const_iterator child = children.begin();
                  child != children.end(); ++child) {
                 of.puts((*child)->hierLib(true));
                 of.puts(" ");
             }
-            of.puts("\n\t$(MAKE) -f " + it->second->hierMk(false) + " -C " + prefix);
+            of.puts("\n\t$(MAKE) -f " + blockp->hierMk(false) + " -C " + prefix);
             of.puts(" VM_PREFIX=" + prefix);
             of.puts("\n\n");
         }
@@ -407,7 +405,6 @@ public:
         V3OutMkFile of(m_makefile);
         emit(of);
     }
-    VL_DEBUG_FUNC;  // Declare debug()
 };
 
 //######################################################################

@@ -14,13 +14,11 @@
 //
 //*************************************************************************
 
-#include "V3Global.h"
-#include "V3Ast.h"
-
 #include "V3Active.h"
 #include "V3ActiveTop.h"
 #include "V3Assert.h"
 #include "V3AssertPre.h"
+#include "V3Ast.h"
 #include "V3Begin.h"
 #include "V3Branch.h"
 #include "V3Broken.h"
@@ -29,7 +27,6 @@
 #include "V3Case.h"
 #include "V3Cast.h"
 #include "V3Cdc.h"
-#include "V3Changed.h"
 #include "V3Class.h"
 #include "V3Clean.h"
 #include "V3Clock.h"
@@ -43,6 +40,7 @@
 #include "V3Depth.h"
 #include "V3DepthBlock.h"
 #include "V3Descope.h"
+#include "V3DfgOptimizer.h"
 #include "V3EmitC.h"
 #include "V3EmitCMain.h"
 #include "V3EmitCMake.h"
@@ -53,7 +51,7 @@
 #include "V3File.h"
 #include "V3Force.h"
 #include "V3Gate.h"
-#include "V3GenClk.h"
+#include "V3Global.h"
 #include "V3Graph.h"
 #include "V3HierBlock.h"
 #include "V3Inline.h"
@@ -61,8 +59,8 @@
 #include "V3Life.h"
 #include "V3LifePost.h"
 #include "V3LinkDot.h"
-#include "V3LinkJump.h"
 #include "V3LinkInc.h"
+#include "V3LinkJump.h"
 #include "V3LinkLValue.h"
 #include "V3LinkLevel.h"
 #include "V3LinkParse.h"
@@ -70,7 +68,6 @@
 #include "V3Localize.h"
 #include "V3MergeCond.h"
 #include "V3Name.h"
-#include "V3Order.h"
 #include "V3Os.h"
 #include "V3Param.h"
 #include "V3ParseSym.h"
@@ -80,6 +77,7 @@
 #include "V3ProtectLib.h"
 #include "V3Randomize.h"
 #include "V3Reloop.h"
+#include "V3Sched.h"
 #include "V3Scope.h"
 #include "V3Scoreboard.h"
 #include "V3Slice.h"
@@ -92,6 +90,7 @@
 #include "V3TSP.h"
 #include "V3Table.h"
 #include "V3Task.h"
+#include "V3Timing.h"
 #include "V3Trace.h"
 #include "V3TraceDecl.h"
 #include "V3Tristate.h"
@@ -103,6 +102,8 @@
 #include "V3Width.h"
 
 #include <ctime>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 V3Global v3Global;
 
@@ -188,7 +189,7 @@ static void process() {
 
     // Push constants, but only true constants preserving liveness
     // so V3Undriven sees variables to be eliminated, ie "if (0 && foo) ..."
-    V3Const::constifyAllLive(v3Global.rootp());
+    if (v3Global.opt.fConstBeforeDfg()) V3Const::constifyAllLive(v3Global.rootp());
 
     // Signal based lint checks, no change to structures
     // Must be before first constification pass drops dead code
@@ -208,7 +209,7 @@ static void process() {
     }
 
     // Propagate constants into expressions
-    V3Const::constifyAllLint(v3Global.rootp());
+    if (v3Global.opt.fConstBeforeDfg()) V3Const::constifyAllLint(v3Global.rootp());
 
     if (!(v3Global.opt.xmlOnly() && !v3Global.opt.flatten())) {
         // Split packed variables into multiple pieces to resolve UNOPTFLAT.
@@ -235,6 +236,16 @@ static void process() {
         v3Global.constRemoveXs(true);
     }
 
+    if (v3Global.opt.fDfgPreInline() || v3Global.opt.fDfgPostInline()) {
+        // If doing DFG optimization, extract some additional candidates
+        V3DfgOptimizer::extract(v3Global.rootp());
+    }
+
+    if (v3Global.opt.fDfgPreInline()) {
+        // Pre inline DFG optimization
+        V3DfgOptimizer::optimize(v3Global.rootp(), " pre inline");
+    }
+
     if (!(v3Global.opt.xmlOnly() && !v3Global.opt.flatten())) {
         // Module inlining
         // Cannot remove dead variables after this, as alias information for final
@@ -243,6 +254,11 @@ static void process() {
             V3Inline::inlineAll(v3Global.rootp());
             V3LinkDot::linkDotArrayed(v3Global.rootp());  // Cleanup as made new modules
         }
+    }
+
+    if (v3Global.opt.fDfgPostInline()) {
+        // Post inline DFG optimization
+        V3DfgOptimizer::optimize(v3Global.rootp(), "post inline");
     }
 
     // --PRE-FLAT OPTIMIZATIONS------------------
@@ -365,6 +381,14 @@ static void process() {
         // Reorder assignments in pipelined blocks
         if (v3Global.opt.fReorder()) V3Split::splitReorderAll(v3Global.rootp());
 
+        if (v3Global.opt.timing().isSetTrue()) {
+            // Convert AST for timing if requested
+            // Needs to be after V3Gate, as that step modifies sentrees
+            // Needs to be before V3Delayed, as delayed assignments are handled differently in
+            // suspendable processes
+            V3Timing::timingAll(v3Global.rootp());
+        }
+
         // Create delayed assignments
         // This creates lots of duplicate ACTIVES so ActiveTop needs to be after this step
         V3Delayed::delayedAll(v3Global.rootp());
@@ -376,11 +400,8 @@ static void process() {
 
         if (v3Global.opt.stats()) V3Stats::statsStageAll(v3Global.rootp(), "PreOrder");
 
-        // Order the code; form SBLOCKs and BLOCKCALLs
-        V3Order::orderAll(v3Global.rootp());
-
-        // Change generated clocks to look at delayed signals
-        V3GenClk::genClkAll(v3Global.rootp());
+        // Schedule the logic
+        V3Sched::schedule(v3Global.rootp());
 
         // Convert sense lists into IF statements.
         V3Clock::clockAll(v3Global.rootp());
@@ -392,14 +413,12 @@ static void process() {
             V3Const::constifyAll(v3Global.rootp());
             V3Life::lifeAll(v3Global.rootp());
         }
+
         if (v3Global.opt.fLifePost()) V3LifePost::lifepostAll(v3Global.rootp());
 
         // Remove unused vars
         V3Const::constifyAll(v3Global.rootp());
         V3Dead::deadifyAllScoped(v3Global.rootp());
-
-        // Detect change loop
-        V3Changed::changedAll(v3Global.rootp());
 
         // Create tracing logic, since we ripped out some signals the user might want to trace
         // Note past this point, we presume traced variables won't move between CFuncs
@@ -540,6 +559,9 @@ static void process() {
 
     // Output DPI protected library files
     if (!v3Global.opt.libCreate().empty()) {
+        if (v3Global.rootp()->delaySchedulerp()) {
+            v3warn(E_UNSUPPORTED, "Unsupported: --lib-create with --timing and delays");
+        }
         V3ProtectLib::protect();
         V3EmitV::emitvFiles();
         V3EmitC::emitcFiles();
@@ -564,7 +586,7 @@ static void verilate(const string& argString) {
     UINFO(1, "Option --verilate: Start Verilation\n");
 
     // Can we skip doing everything if times are ok?
-    V3File::addSrcDepend(v3Global.opt.bin());
+    V3File::addSrcDepend(v3Global.opt.buildDepBin());
     if (v3Global.opt.skipIdentical().isTrue()
         && V3File::checkTimes(v3Global.opt.hierTopDataDir() + "/" + v3Global.opt.prefix()
                                   + "__verFiles.dat",
@@ -608,7 +630,7 @@ static void verilate(const string& argString) {
     }
 
     // Final steps
-    V3Global::dumpCheckGlobalTree("final", 990, v3Global.opt.dumpTreeLevel(__FILE__) >= 3);
+    V3Global::dumpCheckGlobalTree("final", 990, dumpTree() >= 3);
 
     V3Error::abortIfErrors();
 
@@ -664,11 +686,7 @@ static string buildMakeCmd(const string& makefile, const string& target) {
     cmd << v3Global.opt.getenvMAKE();
     cmd << " -C " << v3Global.opt.makeDir();
     cmd << " -f " << makefile;
-    if (jobs == 0) {
-        cmd << " -j";
-    } else if (jobs > 1) {
-        cmd << " -j " << jobs;
-    }
+    if (jobs > 0) cmd << " -j " << jobs;
     for (const string& flag : makeFlags) cmd << ' ' << flag;
     if (!target.empty()) cmd << ' ' << target;
 
@@ -703,7 +721,7 @@ static void execHierVerilation() {
 
 //######################################################################
 
-int main(int argc, char** argv, char** env) {
+int main(int argc, char** argv, char** /*env*/) {
     // General initialization
     std::ios::sync_with_stdio();
 
@@ -716,12 +734,12 @@ int main(int argc, char** argv, char** env) {
 
     // Preprocessor
     // Before command parsing so we can handle -Ds on command line.
-    V3PreShell::boot(env);
+    V3PreShell::boot();
 
     // Command option parsing
-    v3Global.opt.bin(argv[0]);
+    v3Global.opt.buildDepBin(argv[0]);
     const string argString = V3Options::argString(argc - 1, argv + 1);
-    v3Global.opt.parseOpts(new FileLine(FileLine::commandLineFilename()), argc - 1, argv + 1);
+    v3Global.opt.parseOpts(new FileLine{FileLine::commandLineFilename()}, argc - 1, argv + 1);
 
     // Validate settings (aka Boost.Program_options)
     v3Global.opt.notify();

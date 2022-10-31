@@ -244,6 +244,7 @@ Verilator - Translate and simulate SystemVerilog code using C++/SystemC
 
     verilator --help
     verilator --version
+    verilator --binary -j 0 [options] [source_files.v]... [opt_c_files.cpp/c/cc/a/o/so]
     verilator --cc [options] [source_files.v]... [opt_c_files.cpp/c/cc/a/o/so]
     verilator --sc [options] [source_files.v]... [opt_c_files.cpp/c/cc/a/o/so]
     verilator --lint-only -Wall [source_files.v]...
@@ -282,8 +283,10 @@ detailed descriptions of these arguments.
     --autoflush                 Flush streams after all $displays
     --bbox-sys                  Blackbox unknown $system calls
     --bbox-unsup                Blackbox unsupported language features
-    --bin <filename>            Override Verilator binary
+    --binary                    Build model binary
     --build                     Build model executable/library after Verilation
+    --build-dep-bin <filename>  Override build dependency Verilator binary
+    --build-jobs <jobs>         Parallelism for --build
     --cc                        Create C++ output
     --cdc                       Clock domain crossing analysis
      -CFLAGS <flags>            C++ compiler arguments for makefile
@@ -308,10 +311,15 @@ detailed descriptions of these arguments.
      +define+<var>=<value>      Set preprocessor define
     --dpi-hdr-only              Only produce the DPI header file
     --dump-defines              Show preprocessor defines with -E
-    --dump-tree                 Enable dumping .tree files
+    --dump-dfg                  Enable dumping DfgGraphs to .dot files
+    --dump-graph                Enable dumping V3Graphs to .dot files
+    --dump-tree                 Enable dumping Ast .tree files
     --dump-tree-addrids         Use short identifiers instead of addresses
-    --dump-treei <level>        Enable dumping .tree files at a level
-    --dump-treei-<srcfile> <level>  Enable dumping .tree file at a source file at a level
+    --dump-<srcfile>            Enable dumping everything in source file
+    --dumpi-dfg <level>         Enable dumping DfgGraphs to .dot files at level
+    --dumpi-graph <level>       Enable dumping V3Graphs to .dot files at level
+    --dumpi-tree <level>        Enable dumping Ast .tree files at level
+    --dumpi-<srcfile> <level>   Enable dumping everything in source file at level
      -E                         Preprocess, but do not compile
     --error-limit <value>       Abort after this number of errors
     --exe                       Link to create executable
@@ -327,6 +335,7 @@ detailed descriptions of these arguments.
     --gdbbt                     Run Verilator under GDB for backtrace
     --generate-key              Create random key for --protect-key
     --getenv <var>              Get environment variable with defaults
+    --get-supported <feature>   Get if feature is supported
     --help                      Display this help
     --hierarchical              Enable hierarchical Verilation
      -I<dir>                    Directory to search for includes
@@ -334,7 +343,7 @@ detailed descriptions of these arguments.
      +incdir+<dir>              Directory to search for includes
     --inline-mult <value>       Tune module inlining
     --instr-count-dpi <value>   Assumed dynamic instruction count of DPI imports
-     -j <jobs>                  Parallelism for --build
+     -j <jobs>                  Parallelism for --build (alias to --build-jobs)
     --l2-name <value>           Verilog scope name of the top module
     --language <lang>           Default language standard to parse
      -LDFLAGS <flags>           Linker pre-object arguments for makefile
@@ -343,6 +352,7 @@ detailed descriptions of these arguments.
     --lint-only                 Lint, but do not make output
     --make <build-tool>         Generate scripts for specified build tool
      -MAKEFLAGS <flags>         Arguments to pass to make during --build
+    --main                      Generate C++ main() file
     --max-num-width <value>     Maximum number width (default: 64K)
     --Mdir <directory>          Name of output object directory
     --MMD                       Create .d dependency files
@@ -354,6 +364,7 @@ detailed descriptions of these arguments.
      -O<optimization-letter>    Selectable optimizations
      -o <executable>            Name of final executable
     --no-order-clock-delay      Disable ordering clock enable assignments
+    --no-verilate               Skip Verilation, only compile previously Verilated code
     --output-split <statements>          Split .cpp files into pieces
     --output-split-cfuncs <statements>   Split model functions
     --output-split-ctrace <statements>   Split tracing functions
@@ -392,6 +403,8 @@ detailed descriptions of these arguments.
     --threads <threads>         Enable multithreading
     --threads-dpi <mode>        Enable multithreaded DPI
     --threads-max-mtasks <mtasks>  Tune maximum mtask partitioning
+    --timing                    Enable timing support
+    --no-timing                 Disable timing support
     --timescale <timescale>     Sets default timescale
     --timescale-override <timescale>  Overrides all timescales
     --top <topname>             Alias of --top-module

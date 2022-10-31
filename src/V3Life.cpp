@@ -26,14 +26,17 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3Life.h"
-#include "V3Stats.h"
+
 #include "V3Ast.h"
 #include "V3Const.h"
+#include "V3Global.h"
+#include "V3Stats.h"
 
 #include <map>
 #include <vector>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Structure for global state
@@ -93,18 +96,18 @@ public:
         consumed();
     }
     ~LifeVarEntry() = default;
-    inline void simpleAssign(AstNodeAssign* assp) {  // New simple A=.... assignment
+    void simpleAssign(AstNodeAssign* assp) {  // New simple A=.... assignment
         m_assignp = assp;
         m_constp = nullptr;
         m_everSet = true;
         if (VN_IS(assp->rhsp(), Const)) m_constp = VN_AS(assp->rhsp(), Const);
     }
-    inline void complexAssign() {  // A[x]=... or some complicated assignment
+    void complexAssign() {  // A[x]=... or some complicated assignment
         m_assignp = nullptr;
         m_constp = nullptr;
         m_everSet = true;
     }
-    inline void consumed() {  // Rvalue read of A
+    void consumed() {  // Rvalue read of A
         m_assignp = nullptr;
     }
     AstNodeAssign* assignp() const { return m_assignp; }
@@ -127,8 +130,7 @@ class LifeBlock final {
     LifeMap m_map;  // Current active lifetime map for current scope
     LifeBlock* const m_aboveLifep;  // Upper life, or nullptr
     LifeState* const m_statep;  // Current global state
-
-    VL_DEBUG_FUNC;  // Declare debug()
+    bool m_replacedVref = false;  // Replaced a variable reference since last clearing
 
 public:
     LifeBlock(LifeBlock* aboveLifep, LifeState* statep)
@@ -139,7 +141,7 @@ public:
     void checkRemoveAssign(const LifeMap::iterator& it) {
         const AstVar* const varp = it->first->varp();
         LifeVarEntry* const entp = &(it->second);
-        if (!varp->isSigPublic()) {
+        if (!varp->isSigPublic() && !varp->isUsedVirtIface()) {
             // Rather than track what sigs AstUCFunc/AstUCStmt may change,
             // we just don't optimize any public sigs
             // Check the var entry, and remove if appropriate
@@ -164,7 +166,7 @@ public:
             checkRemoveAssign(it);
             it->second.simpleAssign(assp);
         } else {
-            m_map.emplace(nodep, LifeVarEntry(LifeVarEntry::SIMPLEASSIGN(), assp));
+            m_map.emplace(nodep, LifeVarEntry{LifeVarEntry::SIMPLEASSIGN{}, assp});
         }
         // lifeDump();
     }
@@ -174,19 +176,22 @@ public:
         if (it != m_map.end()) {
             it->second.complexAssign();
         } else {
-            m_map.emplace(nodep, LifeVarEntry(LifeVarEntry::COMPLEXASSIGN()));
+            m_map.emplace(nodep, LifeVarEntry{LifeVarEntry::COMPLEXASSIGN{}});
         }
     }
+    void clearReplaced() { m_replacedVref = false; }
+    bool replaced() const { return m_replacedVref; }
     void varUsageReplace(AstVarScope* nodep, AstVarRef* varrefp) {
         // Variable rvalue.  If it references a constant, we can replace it
         const auto it = m_map.find(nodep);
         if (it != m_map.end()) {
             if (AstConst* const constp = it->second.constNodep()) {
-                if (!varrefp->varp()->isSigPublic()) {
+                if (!varrefp->varp()->isSigPublic() && !varrefp->varp()->isUsedVirtIface()) {
                     // Aha, variable is constant; substitute in.
                     // We'll later constant propagate
                     UINFO(4, "     replaceconst: " << varrefp << endl);
                     varrefp->replaceWith(constp->cloneTree(false));
+                    m_replacedVref = true;
                     VL_DO_DANGLING(varrefp->deleteTree(), varrefp);
                     ++m_statep->m_statAssnCon;
                     return;  // **DONE, no longer a var reference**
@@ -195,7 +200,7 @@ public:
             UINFO(4, "     usage: " << nodep << endl);
             it->second.consumed();
         } else {
-            m_map.emplace(nodep, LifeVarEntry(LifeVarEntry::CONSUMED()));
+            m_map.emplace(nodep, LifeVarEntry{LifeVarEntry::CONSUMED{}});
         }
     }
     void complexAssignFind(AstVarScope* nodep) {
@@ -204,7 +209,7 @@ public:
             UINFO(4, "     casfind: " << it->first << endl);
             it->second.complexAssign();
         } else {
-            m_map.emplace(nodep, LifeVarEntry(LifeVarEntry::COMPLEXASSIGN()));
+            m_map.emplace(nodep, LifeVarEntry{LifeVarEntry::COMPLEXASSIGN{}});
         }
     }
     void consumedFind(AstVarScope* nodep) {
@@ -212,7 +217,7 @@ public:
         if (it != m_map.end()) {
             it->second.consumed();
         } else {
-            m_map.emplace(nodep, LifeVarEntry(LifeVarEntry::CONSUMED()));
+            m_map.emplace(nodep, LifeVarEntry{LifeVarEntry::CONSUMED{}});
         }
     }
     void lifeToAbove() {
@@ -283,14 +288,13 @@ private:
     LifeBlock* m_lifep;  // Current active lifetime map for current scope
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
     void setNoopt() {
         m_noopt = true;
         m_lifep->clear();
     }
 
     // VISITORS
-    virtual void visit(AstVarRef* nodep) override {
+    void visit(AstVarRef* nodep) override {
         // Consumption/generation of a variable,
         // it's used so can't elim assignment before this use.
         UASSERT_OBJ(nodep->varScopep(), nodep, "nullptr");
@@ -304,13 +308,19 @@ private:
             VL_DO_DANGLING(m_lifep->varUsageReplace(vscp, nodep), nodep);
         }
     }
-    virtual void visit(AstNodeAssign* nodep) override {
+    void visit(AstNodeAssign* nodep) override {
+        if (nodep->isTimingControl()) {
+            // V3Life doesn't understand time sense - don't optimize
+            setNoopt();
+            iterateChildren(nodep);
+            return;
+        }
         // Collect any used variables first, as lhs may also be on rhs
         // Similar code in V3Dead
-        const uint64_t lastEdit = AstNode::editCountGbl();  // When it was last edited
         m_sideEffect = false;
+        m_lifep->clearReplaced();
         iterateAndNextNull(nodep->rhsp());
-        if (lastEdit != AstNode::editCountGbl()) {
+        if (m_lifep->replaced()) {
             // We changed something, try to constant propagate, but don't delete the
             // assignment as we still need nodep to remain.
             V3Const::constifyEdit(nodep->rhsp());  // rhsp may change
@@ -324,13 +334,18 @@ private:
             iterateAndNextNull(nodep->lhsp());
         }
     }
-    virtual void visit(AstAssignDly* nodep) override {
-        // Don't treat as normal assign; V3Life doesn't understand time sense
+    void visit(AstAssignDly* nodep) override {
+        // V3Life doesn't understand time sense
+        if (nodep->isTimingControl()) {
+            // Don't optimize
+            setNoopt();
+        }
+        // Don't treat as normal assign
         iterateChildren(nodep);
     }
 
     //---- Track control flow changes
-    virtual void visit(AstNodeIf* nodep) override {
+    void visit(AstNodeIf* nodep) override {
         UINFO(4, "   IF " << nodep << endl);
         // Condition is part of PREVIOUS block
         iterateAndNextNull(nodep->condp());
@@ -339,7 +354,7 @@ private:
         LifeBlock* const elseLifep = new LifeBlock(prevLifep, m_statep);
         {
             m_lifep = ifLifep;
-            iterateAndNextNull(nodep->ifsp());
+            iterateAndNextNull(nodep->thensp());
         }
         {
             m_lifep = elseLifep;
@@ -356,7 +371,7 @@ private:
         VL_DO_DANGLING(delete elseLifep, elseLifep);
     }
 
-    virtual void visit(AstWhile* nodep) override {
+    void visit(AstWhile* nodep) override {
         // While's are a problem, as we don't allow loops in the graph.  We
         // may go around the cond/body multiple times.  Thus a
         // lifelication just in the body is ok, but we can't delete an
@@ -374,7 +389,7 @@ private:
         }
         {
             m_lifep = bodyLifep;
-            iterateAndNextNull(nodep->bodysp());
+            iterateAndNextNull(nodep->stmtsp());
             iterateAndNextNull(nodep->incsp());
         }
         m_lifep = prevLifep;
@@ -385,7 +400,7 @@ private:
         VL_DO_DANGLING(delete condLifep, condLifep);
         VL_DO_DANGLING(delete bodyLifep, bodyLifep);
     }
-    virtual void visit(AstJumpBlock* nodep) override {
+    void visit(AstJumpBlock* nodep) override {
         // As with While's we can't predict if a JumpGo will kill us or not
         // It's worse though as an IF(..., JUMPGO) may change the control flow.
         // Just don't optimize blocks with labels; they're rare - so far.
@@ -403,7 +418,7 @@ private:
         bodyLifep->lifeToAbove();
         VL_DO_DANGLING(delete bodyLifep, bodyLifep);
     }
-    virtual void visit(AstNodeCCall* nodep) override {
+    void visit(AstNodeCCall* nodep) override {
         // UINFO(4, "  CCALL " << nodep << endl);
         iterateChildren(nodep);
         // Enter the function and trace it
@@ -413,7 +428,7 @@ private:
             iterate(nodep->funcp());
         }
     }
-    virtual void visit(AstCFunc* nodep) override {
+    void visit(AstCFunc* nodep) override {
         // UINFO(4, "  CFUNC " << nodep << endl);
         if (!m_tracingCall && !nodep->entryPoint()) return;
         m_tracingCall = false;
@@ -422,17 +437,23 @@ private:
         }
         iterateChildren(nodep);
     }
-    virtual void visit(AstUCFunc* nodep) override {
+    void visit(AstUCFunc* nodep) override {
         m_sideEffect = true;  // If appears on assign RHS, don't ever delete the assignment
         iterateChildren(nodep);
     }
-    virtual void visit(AstCMath* nodep) override {
+    void visit(AstCMath* nodep) override {
         m_sideEffect = true;  // If appears on assign RHS, don't ever delete the assignment
         iterateChildren(nodep);
     }
 
-    virtual void visit(AstVar*) override {}  // Don't want varrefs under it
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstVar*) override {}  // Don't want varrefs under it
+    void visit(AstNode* nodep) override {
+        if (nodep->isTimingControl()) {
+            // V3Life doesn't understand time sense - don't optimize
+            setNoopt();
+        }
+        iterateChildren(nodep);
+    }
 
 public:
     // CONSTRUCTORS
@@ -445,7 +466,7 @@ public:
             if (m_lifep) VL_DO_CLEAR(delete m_lifep, m_lifep = nullptr);
         }
     }
-    virtual ~LifeVisitor() override {
+    ~LifeVisitor() override {
         if (m_lifep) VL_DO_CLEAR(delete m_lifep, m_lifep = nullptr);
     }
     VL_UNCOPYABLE(LifeVisitor);
@@ -461,20 +482,20 @@ private:
     LifeState* const m_statep;  // Current state
 
     // VISITORS
-    virtual void visit(AstCFunc* nodep) override {
+    void visit(AstCFunc* nodep) override {
         if (nodep->entryPoint()) {
             // Usage model 1: Simulate all C code, doing lifetime analysis
             LifeVisitor{nodep, m_statep};
         }
     }
-    virtual void visit(AstNodeProcedure* nodep) override {
+    void visit(AstNodeProcedure* nodep) override {
         // Usage model 2: Cleanup basic blocks
         LifeVisitor{nodep, m_statep};
     }
-    virtual void visit(AstVar*) override {}  // Accelerate
-    virtual void visit(AstNodeStmt*) override {}  // Accelerate
-    virtual void visit(AstNodeMath*) override {}  // Accelerate
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstVar*) override {}  // Accelerate
+    void visit(AstNodeStmt*) override {}  // Accelerate
+    void visit(AstNodeMath*) override {}  // Accelerate
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTORS
@@ -482,7 +503,7 @@ public:
         : m_statep{statep} {
         iterate(nodep);
     }
-    virtual ~LifeTopVisitor() override = default;
+    ~LifeTopVisitor() override = default;
 };
 
 //######################################################################
@@ -494,5 +515,5 @@ void V3Life::lifeAll(AstNetlist* nodep) {
         LifeState state;
         LifeTopVisitor{nodep, &state};
     }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("life", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 3);
+    V3Global::dumpCheckGlobalTree("life", 0, dumpTree() >= 3);
 }

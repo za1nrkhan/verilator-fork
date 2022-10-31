@@ -28,11 +28,14 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3Begin.h"
+
 #include "V3Ast.h"
+#include "V3Global.h"
 
 #include <algorithm>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 
@@ -67,9 +70,9 @@ private:
     string m_namedScope;  // Name of begin blocks above us
     string m_unnamedScope;  // Name of begin blocks, including unnamed blocks
     int m_ifDepth = 0;  // Current if depth
+    bool m_underFork = false;  // True if the current statement is directly under a fork
 
     // METHODS
-    VL_DEBUG_FUNC;  // Declare debug()
 
     string dot(const string& a, const string& b) {
         if (a == "") return b;
@@ -84,7 +87,7 @@ private:
             string::size_type pos;
             while ((pos = dottedname.find("__DOT__")) != string::npos) {
                 const string ident = dottedname.substr(0, pos);
-                dottedname = dottedname.substr(pos + strlen("__DOT__"));
+                dottedname = dottedname.substr(pos + std::strlen("__DOT__"));
                 if (nodep->name() != "") {
                     m_displayScope = dot(m_displayScope, ident);
                     m_namedScope = dot(m_namedScope, ident);
@@ -114,19 +117,25 @@ private:
             }
         } else {
             // Move to module
-            m_modp->addStmtp(nodep);
+            m_modp->addStmtsp(nodep);
         }
     }
 
     // VISITORS
-    virtual void visit(AstNodeModule* nodep) override {
+    void visit(AstFork* nodep) override {
+        VL_RESTORER(m_underFork);
+        m_underFork = true;
+        dotNames(nodep, "__FORK__");
+        nodep->name("");
+    }
+    void visit(AstNodeModule* nodep) override {
         VL_RESTORER(m_modp);
         {
             m_modp = nodep;
             iterateChildren(nodep);
         }
     }
-    virtual void visit(AstNodeFTask* nodep) override {
+    void visit(AstNodeFTask* nodep) override {
         UINFO(8, "  " << nodep << endl);
         // Rename it
         if (m_unnamedScope != "") {
@@ -161,26 +170,30 @@ private:
             m_ftaskp = nullptr;
         }
     }
-    virtual void visit(AstBegin* nodep) override {
+    void visit(AstBegin* nodep) override {
         // Begin blocks were only useful in variable creation, change names and delete
         UINFO(8, "  " << nodep << endl);
         VL_RESTORER(m_displayScope);
         VL_RESTORER(m_namedScope);
         VL_RESTORER(m_unnamedScope);
         {
-            dotNames(nodep, "__BEGIN__");
-
+            {
+                VL_RESTORER(m_underFork);
+                m_underFork = false;
+                dotNames(nodep, "__BEGIN__");
+            }
             UASSERT_OBJ(!nodep->genforp(), nodep, "GENFORs should have been expanded earlier");
 
             // Cleanup
+            if (m_underFork) {
+                // If we're under a fork, keep this begin to group its statements together
+                nodep->name("");
+                return;
+            }
             AstNode* addsp = nullptr;
             if (AstNode* const stmtsp = nodep->stmtsp()) {
                 stmtsp->unlinkFrBackWithNext();
-                if (addsp) {
-                    addsp = addsp->addNextNull(stmtsp);
-                } else {
-                    addsp = stmtsp;
-                }
+                addsp = AstNode::addNext(addsp, stmtsp);
             }
             if (addsp) {
                 nodep->replaceWith(addsp);
@@ -190,7 +203,7 @@ private:
             VL_DO_DANGLING(pushDeletep(nodep), nodep);
         }
     }
-    virtual void visit(AstVar* nodep) override {
+    void visit(AstVar* nodep) override {
         if (m_unnamedScope != "") {
             // Rename it
             nodep->name(dot(m_unnamedScope, nodep->name()));
@@ -199,7 +212,7 @@ private:
             liftNode(nodep);
         }
     }
-    virtual void visit(AstTypedef* nodep) override {
+    void visit(AstTypedef* nodep) override {
         if (m_unnamedScope != "") {
             // Rename it
             nodep->name(dot(m_unnamedScope, nodep->name()));
@@ -208,7 +221,7 @@ private:
             liftNode(nodep);
         }
     }
-    virtual void visit(AstCell* nodep) override {
+    void visit(AstCell* nodep) override {
         UINFO(8, "   CELL " << nodep << endl);
         if (m_namedScope != "") {
             m_statep->userMarkChanged(nodep);
@@ -217,18 +230,18 @@ private:
             UINFO(8, "     rename to " << nodep->name() << endl);
             // Move to module
             nodep->unlinkFrBack();
-            m_modp->addStmtp(nodep);
+            m_modp->addStmtsp(nodep);
         }
         iterateChildren(nodep);
     }
-    virtual void visit(AstVarXRef* nodep) override {
+    void visit(AstVarXRef* nodep) override {
         UINFO(9, "   VARXREF " << nodep << endl);
         if (m_namedScope != "" && nodep->inlinedDots() == "" && !m_ftaskp) {
             nodep->inlinedDots(m_namedScope);
             UINFO(9, "    rescope to " << nodep << endl);
         }
     }
-    virtual void visit(AstScopeName* nodep) override {
+    void visit(AstScopeName* nodep) override {
         // If there's a %m in the display text, we add a special node that will contain the name()
         // Similar code in V3Inline
         if (nodep->user1SetOnce()) return;  // Don't double-add text's
@@ -236,20 +249,22 @@ private:
         const string scname = nodep->forFormat() ? m_displayScope : m_namedScope;
         if (!scname.empty()) {
             // To keep correct visual order, must add before other Text's
-            AstNode* const afterp = nodep->scopeAttrp();
+            AstText* const afterp = nodep->scopeAttrp();
             if (afterp) afterp->unlinkFrBackWithNext();
-            nodep->scopeAttrp(new AstText{nodep->fileline(), string("__DOT__") + scname});
-            if (afterp) nodep->scopeAttrp(afterp);
+            nodep->addScopeAttrp(new AstText{nodep->fileline(), string("__DOT__") + scname});
+            if (afterp) nodep->addScopeAttrp(afterp);
         }
         iterateChildren(nodep);
     }
-    virtual void visit(AstCoverDecl* nodep) override {
+    void visit(AstCoverDecl* nodep) override {
         // Don't need to fix path in coverage statements, they're not under
         // any BEGINs, but V3Coverage adds them all under the module itself.
         iterateChildren(nodep);
     }
     // VISITORS - LINT CHECK
-    virtual void visit(AstIf* nodep) override {  // not AstNodeIf; other types not covered
+    void visit(AstIf* nodep) override {  // not AstNodeIf; other types not covered
+        VL_RESTORER(m_underFork);
+        m_underFork = false;
         // Check IFDEPTH warning - could be in other transform files if desire
         VL_RESTORER(m_ifDepth);
         if (m_ifDepth == -1 || v3Global.opt.ifDepth() < 1) {  // Turned off
@@ -263,7 +278,11 @@ private:
         }
         iterateChildren(nodep);
     }
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstNode* nodep) override {
+        VL_RESTORER(m_underFork);
+        m_underFork = false;
+        iterateChildren(nodep);
+    }
 
 public:
     // CONSTRUCTORS
@@ -271,7 +290,7 @@ public:
         : m_statep{statep} {
         iterate(nodep);
     }
-    virtual ~BeginVisitor() override = default;
+    ~BeginVisitor() override = default;
 };
 
 //######################################################################
@@ -284,21 +303,21 @@ private:
     //   AstNodeFTask::user1p           // Node replaced, rename it
 
     // VISITORS
-    virtual void visit(AstNodeFTaskRef* nodep) override {
+    void visit(AstNodeFTaskRef* nodep) override {
         if (nodep->taskp()->user1()) {  // It was converted
             UINFO(9, "    relinkFTask " << nodep << endl);
             nodep->name(nodep->taskp()->name());
         }
         iterateChildren(nodep);
     }
-    virtual void visit(AstVarRef* nodep) override {
+    void visit(AstVarRef* nodep) override {
         if (nodep->varp()->user1()) {  // It was converted
             UINFO(9, "    relinVarRef " << nodep << endl);
             nodep->name(nodep->varp()->name());
         }
         iterateChildren(nodep);
     }
-    virtual void visit(AstIfaceRefDType* nodep) override {
+    void visit(AstIfaceRefDType* nodep) override {
         // May have changed cell names
         // TypeTable is always after all modules, so names are stable
         UINFO(8, "   IFACEREFDTYPE " << nodep << endl);
@@ -307,12 +326,12 @@ private:
         iterateChildren(nodep);
     }
     //--------------------
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     // CONSTRUCTORS
     BeginRelinkVisitor(AstNetlist* nodep, BeginState*) { iterate(nodep); }
-    virtual ~BeginRelinkVisitor() override = default;
+    ~BeginRelinkVisitor() override = default;
 };
 
 //######################################################################
@@ -325,5 +344,5 @@ void V3Begin::debeginAll(AstNetlist* nodep) {
         { BeginVisitor{nodep, &state}; }
         if (state.anyFuncInBegin()) { BeginRelinkVisitor{nodep, &state}; }
     }  // Destruct before checking
-    V3Global::dumpCheckGlobalTree("begin", 0, v3Global.opt.dumpTreeLevel(__FILE__) >= 3);
+    V3Global::dumpCheckGlobalTree("begin", 0, dumpTree() >= 3);
 }

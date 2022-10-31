@@ -27,6 +27,8 @@ CFG_CXXFLAGS_STD_NEWEST = @CFG_CXXFLAGS_STD_NEWEST@
 CFG_CXXFLAGS_NO_UNUSED = @CFG_CXXFLAGS_NO_UNUSED@
 # Compiler flags that turn on extra warnings
 CFG_CXXFLAGS_WEXTRA = @CFG_CXXFLAGS_WEXTRA@
+# Compiler flags that enable coroutine support
+CFG_CXXFLAGS_COROUTINES = @CFG_CXXFLAGS_COROUTINES@
 # Linker libraries for multithreading
 CFG_LDLIBS_THREADS = @CFG_LDLIBS_THREADS@
 
@@ -142,23 +144,9 @@ ifneq ($(VM_THREADS),0)
  endif
 endif
 
-ifneq ($(VM_TRACE_THREADS),0)
- ifneq ($(VM_TRACE_THREADS),)
-  ifeq ($(findstring -DVL_THREADED,$(CPPFLAGS)),)
-   $(error VM_TRACE_THREADS requires VM_THREADS)
-  endif
-  CPPFLAGS += -DVL_TRACE_THREADED
-  VK_C11=1
-  VK_LIBS_THREADED=1
- endif
-endif
-
-
-ifneq ($(VM_TRACE_FST_WRITER_THREAD),0)
- ifneq ($(VM_TRACE_FST_WRITER_THREAD),)
-  CPPFLAGS += -DVL_TRACE_FST_WRITER_THREAD
-  VK_C11=1
-  VK_LIBS_THREADED=1
+ifneq ($(VM_TIMING),0)
+ ifneq ($(VM_TIMING),)
+  CPPFLAGS += $(CFG_CXXFLAGS_COROUTINES)
  endif
 endif
 
@@ -187,7 +175,7 @@ VM_SLOW += $(VM_CLASSES_SLOW) $(VM_SUPPORT_SLOW)
 VK_FAST_OBJS = $(addsuffix .o, $(VM_FAST))
 VK_SLOW_OBJS = $(addsuffix .o, $(VM_SLOW))
 
-VK_USER_OBJS   = $(addsuffix .o, $(VM_USER_CLASSES))
+VK_USER_OBJS = $(addsuffix .o, $(VM_USER_CLASSES))
 
 # Note VM_GLOBAL_FAST and VM_GLOBAL_SLOW holds the files required from the
 # run-time library. In practice everything is actually in VM_GLOBAL_FAST,

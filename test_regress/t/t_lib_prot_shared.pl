@@ -32,6 +32,7 @@ while (1) {
         cmd => ["perl",
                 "$ENV{VERILATOR_ROOT}/bin/verilator",
                 ($Self->{vltmt} ? ' --threads 6' : ''),
+                '--no-timing',
                 "--prefix",
                 "Vt_lib_prot_secret",
                 "-cc",
@@ -56,10 +57,12 @@ while (1) {
 
     compile(
         verilator_flags2 => ["$secret_dir/secret.sv",
+                             '--no-timing',
                              "-LDFLAGS",
                              "'-Wl,-rpath,$abs_secret_dir -L$abs_secret_dir -l$secret_prefix'"],
         xsim_flags2 => ["$secret_dir/secret.sv"],
-        threads => $Self->{vltmt} ? 1 : 0
+        threads => $Self->{vltmt} ? 1 : 0,
+        context_threads => $Self->{vltmt} ? 6 : 1
         );
 
     execute(

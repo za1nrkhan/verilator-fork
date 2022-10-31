@@ -17,15 +17,17 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
 #include "V3EmitC.h"
 #include "V3EmitCBase.h"
+#include "V3Global.h"
 #include "V3LanguageWords.h"
 #include "V3PartitionGraph.h"
 
 #include <algorithm>
 #include <map>
 #include <vector>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Symbol table emitting
@@ -211,7 +213,7 @@ class EmitCSyms final : EmitCBaseVisitor {
                     const string::size_type dpos = whole.rfind("__DOT__");
                     if (dpos != string::npos) {
                         scpName = whole.substr(0, dpos);
-                        varBase = whole.substr(dpos + strlen("__DOT__"));
+                        varBase = whole.substr(dpos + std::strlen("__DOT__"));
                     } else {
                         varBase = whole;
                     }
@@ -258,7 +260,7 @@ class EmitCSyms final : EmitCBaseVisitor {
     }
 
     // VISITORS
-    virtual void visit(AstNetlist* nodep) override {
+    void visit(AstNetlist* nodep) override {
         // Collect list of scopes
         iterateChildren(nodep);
         varsExpand();
@@ -280,8 +282,8 @@ class EmitCSyms final : EmitCBaseVisitor {
             if (!m_dpiHdrOnly) emitDpiImp();
         }
     }
-    virtual void visit(AstConstPool* nodep) override {}  // Ignore
-    virtual void visit(AstNodeModule* nodep) override {
+    void visit(AstConstPool* nodep) override {}  // Ignore
+    void visit(AstNodeModule* nodep) override {
         nameCheck(nodep);
         VL_RESTORER(m_modp);
         {
@@ -289,18 +291,18 @@ class EmitCSyms final : EmitCBaseVisitor {
             iterateChildren(nodep);
         }
     }
-    virtual void visit(AstCellInline* nodep) override {
+    void visit(AstCellInline* nodep) override {
         if (v3Global.opt.vpi()) {
             const string type
                 = (nodep->origModName() == "__BEGIN__") ? "SCOPE_OTHER" : "SCOPE_MODULE";
-            const string name = nodep->scopep()->name() + "__DOT__" + nodep->name();
+            const string name = nodep->scopep()->shortName() + "__DOT__" + nodep->name();
             const string name_dedot = AstNode::dedotName(name);
             const int timeunit = m_modp->timeunit().powerOfTen();
             m_vpiScopeCandidates.insert(
                 std::make_pair(name, ScopeData(scopeSymString(name), name_dedot, timeunit, type)));
         }
     }
-    virtual void visit(AstScope* nodep) override {
+    void visit(AstScope* nodep) override {
         if (VN_IS(m_modp, Class)) return;  // The ClassPackage is what is visible
         nameCheck(nodep);
 
@@ -315,7 +317,7 @@ class EmitCSyms final : EmitCBaseVisitor {
                                                         timeunit, type)));
         }
     }
-    virtual void visit(AstScopeName* nodep) override {
+    void visit(AstScopeName* nodep) override {
         const string name = nodep->scopeSymName();
         // UINFO(9,"scnameins sp "<<nodep->name()<<" sp "<<nodep->scopePrettySymName()
         // <<" ss"<<name<<endl);
@@ -337,19 +339,19 @@ class EmitCSyms final : EmitCBaseVisitor {
             }
         }
     }
-    virtual void visit(AstVar* nodep) override {
+    void visit(AstVar* nodep) override {
         nameCheck(nodep);
         iterateChildren(nodep);
         if (nodep->isSigUserRdPublic() && !m_cfuncp)
             m_modVars.emplace_back(std::make_pair(m_modp, nodep));
     }
-    virtual void visit(AstCoverDecl* nodep) override {
+    void visit(AstCoverDecl* nodep) override {
         // Assign numbers to all bins, so we know how big of an array to use
         if (!nodep->dataDeclNullp()) {  // else duplicate we don't need code for
             nodep->binNum(m_coverBins++);
         }
     }
-    virtual void visit(AstCFunc* nodep) override {
+    void visit(AstCFunc* nodep) override {
         nameCheck(nodep);
         if (nodep->dpiImportPrototype() || nodep->dpiExportDispatcher()) m_dpis.push_back(nodep);
         VL_RESTORER(m_cfuncp);
@@ -360,8 +362,8 @@ class EmitCSyms final : EmitCBaseVisitor {
     }
 
     //---------------------------------------
-    virtual void visit(AstConst*) override {}
-    virtual void visit(AstNode* nodep) override { iterateChildren(nodep); }
+    void visit(AstConst*) override {}
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
 
 public:
     explicit EmitCSyms(AstNetlist* nodep, bool dpiHdrOnly)
@@ -443,17 +445,21 @@ void EmitCSyms::emitSymHdr() {
         puts("uint32_t __Vm_baseCode = 0;"
              "  ///< Used by trace routines when tracing multiple models\n");
     }
+    if (v3Global.hasEvents()) puts("std::vector<VlEvent*> __Vm_triggeredEvents;\n");
+    if (v3Global.hasClasses()) puts("VlDeleter __Vm_deleter;\n");
     puts("bool __Vm_didInit = false;\n");
-
-    if (v3Global.opt.profExec()) {
-        puts("\n// EXECUTION PROFILING\n");
-        puts("VlExecutionProfiler __Vm_executionProfiler;\n");
-    }
 
     if (v3Global.opt.mtasks()) {
         puts("\n// MULTI-THREADING\n");
         puts("VlThreadPool* const __Vm_threadPoolp;\n");
-        puts("bool __Vm_even_cycle = false;\n");
+        puts("bool __Vm_even_cycle__ico = false;\n");
+        puts("bool __Vm_even_cycle__act = false;\n");
+        puts("bool __Vm_even_cycle__nba = false;\n");
+    }
+
+    if (v3Global.opt.profExec()) {
+        puts("\n// EXECUTION PROFILING\n");
+        puts("VlExecutionProfiler* const __Vm_executionProfilerp;\n");
     }
 
     puts("\n// MODULE INSTANCE STATE\n");
@@ -505,6 +511,22 @@ void EmitCSyms::emitSymHdr() {
 
     puts("\n// METHODS\n");
     puts("const char* name() { return TOP.name(); }\n");
+
+    if (v3Global.hasEvents()) {
+        puts("void enqueueTriggeredEventForClearing(VlEvent& event) {\n");
+        puts("#ifdef VL_DEBUG\n");
+        puts("if (VL_UNLIKELY(!event.isTriggered())) {\n");
+        puts("VL_FATAL_MT(__FILE__, __LINE__, __FILE__, \"event passed to "
+             "'enqueueTriggeredEventForClearing' was not triggered\");\n");
+        puts("}\n");
+        puts("#endif\n");
+        puts("__Vm_triggeredEvents.push_back(&event);\n");
+        puts("}\n");
+        puts("void clearTriggeredEvents() {\n");
+        puts("for (const auto eventp : __Vm_triggeredEvents) eventp->clearTriggered();\n");
+        puts("__Vm_triggeredEvents.clear();\n");
+        puts("}\n");
+    }
 
     if (v3Global.needTraceDumper()) {
         if (!optSystemC()) puts("void _traceDump();\n");
@@ -673,8 +695,35 @@ void EmitCSyms::emitSymImp() {
         puts("_vm_pgoProfiler.write(\"" + topClassName()
              + "\", _vm_contextp__->profVltFilename());\n");
     }
-    if (v3Global.opt.mtasks()) puts("delete __Vm_threadPoolp;\n");
-    puts("}\n\n");
+    puts("}\n");
+
+    if (v3Global.needTraceDumper()) {
+        if (!optSystemC()) {
+            puts("\nvoid " + symClassName() + "::_traceDump() {\n");
+            // Caller checked for __Vm_dumperp non-nullptr
+            puts("const VerilatedLockGuard lock(__Vm_dumperMutex);\n");
+            puts("__Vm_dumperp->dump(VL_TIME_Q());\n");
+            puts("}\n");
+        }
+
+        puts("\nvoid " + symClassName() + "::_traceDumpOpen() {\n");
+        puts("const VerilatedLockGuard lock(__Vm_dumperMutex);\n");
+        puts("if (VL_UNLIKELY(!__Vm_dumperp)) {\n");
+        puts("__Vm_dumperp = new " + v3Global.opt.traceClassLang() + "();\n");
+        puts("__Vm_modelp->trace(__Vm_dumperp, 0, 0);\n");
+        puts("std::string dumpfile = _vm_contextp__->dumpfileCheck();\n");
+        puts("__Vm_dumperp->open(dumpfile.c_str());\n");
+        puts("__Vm_dumping = true;\n");
+        puts("}\n");
+        puts("}\n");
+
+        puts("\nvoid " + symClassName() + "::_traceDumpClose() {\n");
+        puts("const VerilatedLockGuard lock(__Vm_dumperMutex);\n");
+        puts("__Vm_dumping = false;\n");
+        puts("VL_DO_CLEAR(delete __Vm_dumperp, __Vm_dumperp = nullptr);\n");
+        puts("}\n");
+    }
+    puts("\n");
 
     // Constructor
     puts(symClassName() + "::" + symClassName()
@@ -705,12 +754,13 @@ void EmitCSyms::emitSymImp() {
         // Note we create N-1 threads in the thread pool. The thread
         // that calls eval() becomes the final Nth thread for the
         // duration of the eval call.
-        puts("    , __Vm_threadPoolp{new VlThreadPool{_vm_contextp__, "
-             + cvtToStr(v3Global.opt.threads() - 1) + ", "
-             + (v3Global.opt.profExec()
-                    ? "&__Vm_executionProfiler, &VlExecutionProfiler::startWorkerSetup"
-                    : "nullptr, nullptr")
-             + "}}\n");
+        puts("    , __Vm_threadPoolp{static_cast<VlThreadPool*>(contextp->threadPoolp())}\n");
+    }
+
+    if (v3Global.opt.profExec()) {
+        puts("    , "
+             "__Vm_executionProfilerp{static_cast<VlExecutionProfiler*>(contextp->"
+             "enableExecutionProfiler(&VlExecutionProfiler::construct))}\n");
     }
 
     puts("    // Setup module instances\n");
@@ -736,15 +786,14 @@ void EmitCSyms::emitSymImp() {
     if (v3Global.opt.profPgo()) {
         puts("// Configure profiling for PGO\n");
         if (v3Global.opt.mtasks()) {
-            v3Global.rootp()->topModulep()->foreach<AstExecGraph>(
-                [&](const AstExecGraph* execGraphp) {
-                    for (const V3GraphVertex* vxp = execGraphp->depGraphp()->verticesBeginp(); vxp;
-                         vxp = vxp->verticesNextp()) {
-                        const ExecMTask* const mtp = static_cast<const ExecMTask*>(vxp);
-                        puts("_vm_pgoProfiler.addCounter(" + cvtToStr(mtp->profilerId()) + ", \""
-                             + mtp->hashName() + "\");\n");
-                    }
-                });
+            v3Global.rootp()->topModulep()->foreach([&](const AstExecGraph* execGraphp) {
+                for (const V3GraphVertex* vxp = execGraphp->depGraphp()->verticesBeginp(); vxp;
+                     vxp = vxp->verticesNextp()) {
+                    const ExecMTask* const mtp = static_cast<const ExecMTask*>(vxp);
+                    puts("_vm_pgoProfiler.addCounter(" + cvtToStr(mtp->profilerId()) + ", \""
+                         + mtp->hashName() + "\");\n");
+                }
+            });
         }
     }
 
@@ -774,7 +823,7 @@ void EmitCSyms::emitSymImp() {
                 puts(protectIf(aboveScopep->nameDotless(), aboveScopep->protect()));
             }
             puts(".");
-            puts(protName.substr(protName.rfind(".") + 1));
+            puts(protName.substr(protName.rfind('.') + 1));
             puts(" = &");
             puts(protectIf(scopep->nameDotless(), scopep->protect()) + ";\n");
             ++m_numStmts;
@@ -816,7 +865,7 @@ void EmitCSyms::emitSymImp() {
 
     if (v3Global.dpi()) {
         m_ofpBase->puts("// Setup export functions\n");
-        m_ofpBase->puts("for (int __Vfinal=0; __Vfinal<2; __Vfinal++) {\n");
+        m_ofpBase->puts("for (int __Vfinal = 0; __Vfinal < 2; ++__Vfinal) {\n");
         for (auto it = m_scopeFuncs.begin(); it != m_scopeFuncs.end(); ++it) {
             AstScopeName* const scopep = it->second.m_scopep;
             AstCFunc* const funcp = it->second.m_cfuncp;
@@ -922,33 +971,6 @@ void EmitCSyms::emitSymImp() {
     }
 
     m_ofpBase->puts("}\n");
-
-    if (v3Global.needTraceDumper()) {
-        if (!optSystemC()) {
-            puts("\nvoid " + symClassName() + "::_traceDump() {\n");
-            // Caller checked for __Vm_dumperp non-nullptr
-            puts("const VerilatedLockGuard lock(__Vm_dumperMutex);\n");
-            puts("__Vm_dumperp->dump(VL_TIME_Q());\n");
-            puts("}\n");
-        }
-
-        puts("\nvoid " + symClassName() + "::_traceDumpOpen() {\n");
-        puts("const VerilatedLockGuard lock(__Vm_dumperMutex);\n");
-        puts("if (VL_UNLIKELY(!__Vm_dumperp)) {\n");
-        puts("__Vm_dumperp = new " + v3Global.opt.traceClassLang() + "();\n");
-        puts("__Vm_modelp->trace(__Vm_dumperp, 0, 0);\n");
-        puts("std::string dumpfile = _vm_contextp__->dumpfileCheck();\n");
-        puts("__Vm_dumperp->open(dumpfile.c_str());\n");
-        puts("__Vm_dumping = true;\n");
-        puts("}\n");
-        puts("}\n");
-
-        puts("\nvoid " + symClassName() + "::_traceDumpClose() {\n");
-        puts("const VerilatedLockGuard lock(__Vm_dumperMutex);\n");
-        puts("__Vm_dumping = false;\n");
-        puts("VL_DO_CLEAR(delete __Vm_dumperp, __Vm_dumperp = nullptr);\n");
-        puts("}\n");
-    }
 
     closeSplit();
     m_ofp = nullptr;

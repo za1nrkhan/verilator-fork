@@ -17,15 +17,17 @@
 #include "config_build.h"
 #include "verilatedos.h"
 
-#include "V3Global.h"
-#include "V3Stats.h"
 #include "V3Ast.h"
 #include "V3File.h"
+#include "V3Global.h"
 #include "V3Os.h"
+#include "V3Stats.h"
 
 #include <iomanip>
 #include <map>
 #include <unordered_map>
+
+VL_DEFINE_DEBUG_FUNCTIONS;
 
 //######################################################################
 // Stats dumping
@@ -44,6 +46,7 @@ class StatsReport final {
         os << "Information:\n";
         os << "  " << V3Options::version() << '\n';
         os << "  Arguments: " << v3Global.opt.allArgsString() << '\n';
+        os << "  Build jobs: " << v3Global.opt.buildJobs() << '\n';
         os << '\n';
     }
 

@@ -107,6 +107,7 @@ SUBDIRS = docs src test_regress \
 	examples/cmake_tracing_c \
 	examples/cmake_tracing_sc \
 	examples/cmake_protect_lib \
+	examples/make_hello_binary \
 	examples/make_hello_c \
 	examples/make_hello_sc \
 	examples/make_tracing_c \
@@ -243,6 +244,7 @@ installdata:
 	; for p in $(VL_INST_INC_SRCDIR_FILES) ; do \
 	  $(INSTALL_DATA) $$p $(DESTDIR)$(pkgdatadir)/$$p; \
 	done
+	$(MKINSTALLDIRS) $(DESTDIR)$(pkgdatadir)/examples/make_hello_binary
 	$(MKINSTALLDIRS) $(DESTDIR)$(pkgdatadir)/examples/make_hello_c
 	$(MKINSTALLDIRS) $(DESTDIR)$(pkgdatadir)/examples/make_hello_sc
 	$(MKINSTALLDIRS) $(DESTDIR)$(pkgdatadir)/examples/make_tracing_c
@@ -278,6 +280,7 @@ uninstall:
 	-rmdir $(DESTDIR)$(pkgdatadir)/include/gtkwave
 	-rmdir $(DESTDIR)$(pkgdatadir)/include/vltstd
 	-rmdir $(DESTDIR)$(pkgdatadir)/include
+	-rmdir $(DESTDIR)$(pkgdatadir)/examples/make_hello_binary
 	-rmdir $(DESTDIR)$(pkgdatadir)/examples/make_hello_c
 	-rmdir $(DESTDIR)$(pkgdatadir)/examples/make_hello_sc
 	-rmdir $(DESTDIR)$(pkgdatadir)/examples/make_tracing_c
@@ -322,16 +325,18 @@ cppcheck: $(CPPCHECK_DEP)
 	$(CPPCHECK) $(CPPCHECK_FLAGS) -DVL_DEBUG=1 -DVL_CPPCHECK=1 -DVL_THREADED=1 $(CPPCHECK_INC) $<
 
 CLANGTIDY = clang-tidy
-CLANGTIDY_FLAGS = -config='' -checks='-fuchsia-*,-cppcoreguidelines-avoid-c-arrays,-cppcoreguidelines-init-variables'
-CLANGTIDY_DEP = $(subst .h,.h.tidy,$(CPPCHECK_H)) \
-	$(subst .cpp,.cpp.tidy,$(CPPCHECK_CPP))
+CLANGTIDY_FLAGS = -config='' \
+	-header-filter='.*' \
+	-checks='-fuchsia-*,-cppcoreguidelines-avoid-c-arrays,-cppcoreguidelines-init-variables,-cppcoreguidelines-avoid-goto,-modernize-avoid-c-arrays,-readability-magic-numbers,-readability-simplify-boolean-expr,-cppcoreguidelines-macro-usage' \
+
+CLANGTIDY_DEP = $(subst .cpp,.cpp.tidy,$(CPPCHECK_CPP))
 CLANGTIDY_DEFS = -DVL_DEBUG=1 -DVL_THREADED=1 -DVL_CPPCHECK=1
 
 clang-tidy: $(CLANGTIDY_DEP)
 %.cpp.tidy: %.cpp
 	$(CLANGTIDY) $(CLANGTIDY_FLAGS) $< -- $(CLANGTIDY_DEFS) $(CPPCHECK_INC) | 2>&1 tee $@
 %.h.tidy: %.h
-	$(CLANGTIDY) $(CLANGTIDY_FLAGS) $< -- $(CLANGTIDY_DEFS) $(CPPCHECK_INC) | 2>&1 tee $@
+	$(CLANGTIDY) $(CLANGTIDY_FLAGS) $< -- $(CLANGTIDY_DEFS) $(CPPCHECK_INC) -x c++-header | 2>&1 tee $@
 
 analyzer-src:
 	-rm -rf src/obj_dbg
@@ -343,13 +348,13 @@ analyzer-include:
 
 format: clang-format yapf format-pl-exec
 
-CLANGFORMAT = clang-format-11
+CLANGFORMAT = clang-format-14
 CLANGFORMAT_FLAGS = -i
 CLANGFORMAT_FILES = $(CPPCHECK_CPP) $(CPPCHECK_H) $(CPPCHECK_YL) test_regress/t/*.c* test_regress/t/*.h
 
 clang-format:
-	@$(CLANGFORMAT) --version | egrep 11.0 > /dev/null \
-		|| echo "*** You are not using clang-format 11.0, indents may differ from master's ***"
+	@$(CLANGFORMAT) --version | egrep 14.0 > /dev/null \
+		|| echo "*** You are not using clang-format-14, indents may differ from master's ***"
 	$(CLANGFORMAT) $(CLANGFORMAT_FLAGS) $(CLANGFORMAT_FILES)
 
 PY_PROGRAMS = \
@@ -388,10 +393,10 @@ yapf:
 FLAKE8 = flake8
 FLAKE8_FLAGS = \
 	--extend-exclude=fastcov.py \
-	--ignore=E123,E129,E251,E501,W503,W504,E701
+	--ignore=E123,E129,E251,E402,E501,W503,W504,E701
 
 PYLINT = pylint
-PYLINT_FLAGS = --disable=R0801
+PYLINT_FLAGS = --score=n --disable=R0801
 
 lint-py:
 	-$(FLAKE8) $(FLAKE8_FLAGS) $(PY_PROGRAMS)

@@ -47,26 +47,33 @@
 
 #define VERILATOR_VERILATED_CPP_
 
-#include "verilatedos.h"
-#include "verilated_imp.h"
-
 #include "verilated_config.h"
+#include "verilatedos.h"
+
+#include "verilated_imp.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
-#include <sstream>
-#include <sys/stat.h>  // mkdir
-#include <list>
 #include <limits>
+#include <list>
+#include <sstream>
 #include <utility>
+
+#include <sys/stat.h>  // mkdir
 
 // clang-format off
 #if defined(_WIN32) || defined(__MINGW32__)
 # include <direct.h>  // mkdir
 #endif
+
+#ifdef VL_THREADED
+# include "verilated_threads.h"
+#endif
 // clang-format on
+
+#include "verilated_trace.h"
 
 // Max characters in static char string for VL_VALUE_STRING
 constexpr unsigned VL_VALUE_STRING_MAX_WIDTH = 8192;
@@ -673,7 +680,10 @@ std::string _vl_vsformat_time(char* tmp, T ld, int timeunit, bool left, size_t w
     if (std::numeric_limits<T>::is_integer) {
         constexpr int b = 128;
         constexpr int w = VL_WORDS_I(b);
-        VlWide<w> tmp0, tmp1, tmp2, tmp3;
+        VlWide<w> tmp0;
+        VlWide<w> tmp1;
+        VlWide<w> tmp2;
+        VlWide<w> tmp3;
 
         WDataInP shifted = VL_EXTEND_WQ(b, 0, tmp0, static_cast<QData>(ld));
         if (shift < 0) {
@@ -691,7 +701,8 @@ std::string _vl_vsformat_time(char* tmp, T ld, int timeunit, bool left, size_t w
             = VL_EXTEND_WQ(b, 0, tmp2, std::numeric_limits<uint64_t>::max());  // breaks shifted
         if (VL_GT_W(w, integer, max64Bit)) {
             WDataOutP v = VL_ASSIGN_W(b, tmp3, integer);  // breaks fracDigitsPow10
-            VlWide<w> zero, ten;
+            VlWide<w> zero;
+            VlWide<w> ten;
             VL_ZERO_W(b, zero);
             VL_EXTEND_WI(b, 0, ten, 10);
             char buf[128];  // 128B is obviously long enough to represent 128bit integer in decimal
@@ -894,15 +905,22 @@ void _vl_vsformat(std::string& output, const char* formatp, va_list ap) VL_MT_SA
                         digits = append.length();
                     }
                     const int needmore = width - digits;
-                    std::string padding;
                     if (needmore > 0) {
-                        if (pctp && pctp[0] && pctp[1] == '0') {  // %0
-                            padding.append(needmore, '0');  // Pre-pad zero
-                        } else {
+                        std::string padding;
+                        if (left) {
                             padding.append(needmore, ' ');  // Pre-pad spaces
+                            output += append + padding;
+                        } else {
+                            if (pctp && pctp[0] && pctp[1] == '0') {  // %0
+                                padding.append(needmore, '0');  // Pre-pad zero
+                            } else {
+                                padding.append(needmore, ' ');  // Pre-pad spaces
+                            }
+                            output += padding + append;
                         }
+                    } else {
+                        output += append;
                     }
-                    output += left ? (append + padding) : (padding + append);
                     break;
                 }
                 case '#': {  // Unsigned decimal
@@ -916,15 +934,22 @@ void _vl_vsformat(std::string& output, const char* formatp, va_list ap) VL_MT_SA
                         digits = append.length();
                     }
                     const int needmore = width - digits;
-                    std::string padding;
                     if (needmore > 0) {
-                        if (pctp && pctp[0] && pctp[1] == '0') {  // %0
-                            padding.append(needmore, '0');  // Pre-pad zero
-                        } else {
+                        std::string padding;
+                        if (left) {
                             padding.append(needmore, ' ');  // Pre-pad spaces
+                            output += append + padding;
+                        } else {
+                            if (pctp && pctp[0] && pctp[1] == '0') {  // %0
+                                padding.append(needmore, '0');  // Pre-pad zero
+                            } else {
+                                padding.append(needmore, ' ');  // Pre-pad spaces
+                            }
+                            output += padding + append;
                         }
+                    } else {
+                        output += append;
                     }
-                    output += left ? (append + padding) : (padding + append);
                     break;
                 }
                 case 't': {  // Time
@@ -933,21 +958,62 @@ void _vl_vsformat(std::string& output, const char* formatp, va_list ap) VL_MT_SA
                     output += _vl_vsformat_time(t_tmp, ld, timeunit, left, width);
                     break;
                 }
-                case 'b':
-                    for (; lsb >= 0; --lsb) output += (VL_BITRSHIFT_W(lwp, lsb) & 1) + '0';
-                    break;
-                case 'o':
-                    for (; lsb >= 0; --lsb) {
-                        lsb = (lsb / 3) * 3;  // Next digit
-                        // Octal numbers may span more than one wide word,
-                        // so we need to grab each bit separately and check for overrun
-                        // Octal is rare, so we'll do it a slow simple way
-                        output += static_cast<char>(
-                            '0' + ((VL_BITISSETLIMIT_W(lwp, lbits, lsb + 0)) ? 1 : 0)
-                            + ((VL_BITISSETLIMIT_W(lwp, lbits, lsb + 1)) ? 2 : 0)
-                            + ((VL_BITISSETLIMIT_W(lwp, lbits, lsb + 2)) ? 4 : 0));
+                case 'b':  // FALLTHRU
+                case 'o':  // FALLTHRU
+                case 'x': {
+                    if (widthSet || left) {
+                        lsb = VL_MOSTSETBITP1_W(VL_WORDS_I(lbits), lwp);
+                        lsb = (lsb < 1) ? 0 : (lsb - 1);
+                    }
+
+                    std::string append;
+                    int digits;
+                    switch (fmt) {
+                    case 'b': {
+                        digits = lsb + 1;
+                        for (; lsb >= 0; --lsb) append += (VL_BITRSHIFT_W(lwp, lsb) & 1) + '0';
+                        break;
+                    }
+                    case 'o': {
+                        digits = (lsb + 1 + 2) / 3;
+                        for (; lsb >= 0; --lsb) {
+                            lsb = (lsb / 3) * 3;  // Next digit
+                            // Octal numbers may span more than one wide word,
+                            // so we need to grab each bit separately and check for overrun
+                            // Octal is rare, so we'll do it a slow simple way
+                            append += static_cast<char>(
+                                '0' + ((VL_BITISSETLIMIT_W(lwp, lbits, lsb + 0)) ? 1 : 0)
+                                + ((VL_BITISSETLIMIT_W(lwp, lbits, lsb + 1)) ? 2 : 0)
+                                + ((VL_BITISSETLIMIT_W(lwp, lbits, lsb + 2)) ? 4 : 0));
+                        }
+                        break;
+                    }
+                    default: {  // 'x'
+                        digits = (lsb + 1 + 3) / 4;
+                        for (; lsb >= 0; --lsb) {
+                            lsb = (lsb / 4) * 4;  // Next digit
+                            const IData charval = VL_BITRSHIFT_W(lwp, lsb) & 0xf;
+                            append += "0123456789abcdef"[charval];
+                        }
+                        break;
+                    }
+                    }  // switch
+
+                    const int needmore = width - digits;
+                    if (needmore > 0) {
+                        std::string padding;
+                        if (left) {
+                            padding.append(needmore, ' ');  // Pre-pad spaces
+                            output += append + padding;
+                        } else {
+                            padding.append(needmore, '0');  // Pre-pad zero
+                            output += padding + append;
+                        }
+                    } else {
+                        output += append;
                     }
                     break;
+                }  // b / o / x
                 case 'u':
                 case 'z': {  // Packed 4-state
                     const bool is_4_state = (fmt == 'z');
@@ -973,13 +1039,6 @@ void _vl_vsformat(std::string& output, const char* formatp, va_list ap) VL_MT_SA
                         }
                     }
                     break;
-                case 'x':
-                    for (; lsb >= 0; --lsb) {
-                        lsb = (lsb / 4) * 4;  // Next digit
-                        const IData charval = VL_BITRSHIFT_W(lwp, lsb) & 0xf;
-                        output += "0123456789abcdef"[charval];
-                    }
-                    break;
                 default: {  // LCOV_EXCL_START
                     const std::string msg = std::string{"Unknown _vl_vsformat code: "} + pos[0];
                     VL_FATAL_MT(__FILE__, __LINE__, "", msg.c_str());
@@ -992,22 +1051,22 @@ void _vl_vsformat(std::string& output, const char* formatp, va_list ap) VL_MT_SA
     }
 }
 
-static inline bool _vl_vsss_eof(FILE* fp, int floc) VL_MT_SAFE {
+static bool _vl_vsss_eof(FILE* fp, int floc) VL_MT_SAFE {
     if (VL_LIKELY(fp)) {
         return std::feof(fp) ? true : false;  // true : false to prevent MSVC++ warning
     } else {
         return floc < 0;
     }
 }
-static inline void _vl_vsss_advance(FILE* fp, int& floc) VL_MT_SAFE {
+static void _vl_vsss_advance(FILE* fp, int& floc) VL_MT_SAFE {
     if (VL_LIKELY(fp)) {
         std::fgetc(fp);
     } else {
         floc -= 8;
     }
 }
-static inline int _vl_vsss_peek(FILE* fp, int& floc, const WDataInP fromp,
-                                const std::string& fstr) VL_MT_SAFE {
+static int _vl_vsss_peek(FILE* fp, int& floc, const WDataInP fromp,
+                         const std::string& fstr) VL_MT_SAFE {
     // Get a character without advancing
     if (VL_LIKELY(fp)) {
         const int data = std::fgetc(fp);
@@ -1024,17 +1083,16 @@ static inline int _vl_vsss_peek(FILE* fp, int& floc, const WDataInP fromp,
         }
     }
 }
-static inline void _vl_vsss_skipspace(FILE* fp, int& floc, const WDataInP fromp,
-                                      const std::string& fstr) VL_MT_SAFE {
+static void _vl_vsss_skipspace(FILE* fp, int& floc, const WDataInP fromp,
+                               const std::string& fstr) VL_MT_SAFE {
     while (true) {
         const int c = _vl_vsss_peek(fp, floc, fromp, fstr);
         if (c == EOF || !std::isspace(c)) return;
         _vl_vsss_advance(fp, floc);
     }
 }
-static inline void _vl_vsss_read_str(FILE* fp, int& floc, const WDataInP fromp,
-                                     const std::string& fstr, char* tmpp,
-                                     const char* acceptp) VL_MT_SAFE {
+static void _vl_vsss_read_str(FILE* fp, int& floc, const WDataInP fromp, const std::string& fstr,
+                              char* tmpp, const char* acceptp) VL_MT_SAFE {
     // Read into tmp, consisting of characters from acceptp list
     char* cp = tmpp;
     while (true) {
@@ -1048,9 +1106,8 @@ static inline void _vl_vsss_read_str(FILE* fp, int& floc, const WDataInP fromp,
     *cp++ = '\0';
     // VL_DBG_MSGF(" _read got='"<<tmpp<<"'\n");
 }
-static inline char* _vl_vsss_read_bin(FILE* fp, int& floc, const WDataInP fromp,
-                                      const std::string& fstr, char* beginp, std::size_t n,
-                                      const bool inhibit = false) {
+static char* _vl_vsss_read_bin(FILE* fp, int& floc, const WDataInP fromp, const std::string& fstr,
+                               char* beginp, std::size_t n, const bool inhibit = false) {
     // Variant of _vl_vsss_read_str using the same underlying I/O functions but optimized
     // specifically for block reads of N bytes (read operations are not demarcated by
     // whitespace). In the fp case, except descriptor to have been opened in binary mode.
@@ -1062,12 +1119,11 @@ static inline char* _vl_vsss_read_bin(FILE* fp, int& floc, const WDataInP fromp,
     }
     return beginp;
 }
-static inline void _vl_vsss_setbit(WDataOutP owp, int obits, int lsb, int nbits,
-                                   IData ld) VL_MT_SAFE {
+static void _vl_vsss_setbit(WDataOutP owp, int obits, int lsb, int nbits, IData ld) VL_MT_SAFE {
     for (; nbits && lsb < obits; nbits--, lsb++, ld >>= 1) { VL_ASSIGNBIT_WI(lsb, owp, ld & 1); }
 }
-static inline void _vl_vsss_based(WDataOutP owp, int obits, int baseLog2, const char* strp,
-                                  size_t posstart, size_t posend) VL_MT_SAFE {
+static void _vl_vsss_based(WDataOutP owp, int obits, int baseLog2, const char* strp,
+                           size_t posstart, size_t posend) VL_MT_SAFE {
     // Read in base "2^^baseLog2" digits from strp[posstart..posend-1] into owp of size obits.
     int lsb = 0;
     for (int i = 0, pos = static_cast<int>(posend) - 1;
@@ -1453,11 +1509,12 @@ void VL_SFORMAT_X(int obits, void* destp, const char* formatp, ...) VL_MT_SAFE {
 
 void VL_SFORMAT_X(int obits_ignored, std::string& output, const char* formatp, ...) VL_MT_SAFE {
     if (obits_ignored) {}
-    output = "";
+    std::string temp_output;
     va_list ap;
     va_start(ap, formatp);
-    _vl_vsformat(output, formatp, ap);
+    _vl_vsformat(temp_output, formatp, ap);
     va_end(ap);
+    output = temp_output;
 }
 
 std::string VL_SFORMATF_NX(const char* formatp, ...) VL_MT_SAFE {
@@ -1840,8 +1897,7 @@ VlReadMem::VlReadMem(bool hex, int bits, const std::string& filename, QData star
     , m_bits{bits}
     , m_filename(filename)  // Need () or GCC 4.8 false warning
     , m_end{end}
-    , m_addr{start}
-    , m_linenum{0} {
+    , m_addr{start} {
     m_fp = std::fopen(filename.c_str(), "r");
     if (VL_UNLIKELY(!m_fp)) {
         // We don't report the Verilog source filename as it slow to have to pass it down
@@ -1975,8 +2031,7 @@ void VlReadMem::setData(void* valuep, const std::string& rhs) {
 
 VlWriteMem::VlWriteMem(bool hex, int bits, const std::string& filename, QData start, QData end)
     : m_hex{hex}
-    , m_bits{bits}
-    , m_addr{0} {
+    , m_bits{bits} {
     if (VL_UNLIKELY(start > end)) {
         VL_FATAL_MT(filename.c_str(), 0, "", "$writemem invalid address range");
         return;
@@ -2158,29 +2213,6 @@ void VL_WRITEMEM_N(bool hex,  // Hex format, else binary
 //===========================================================================
 // Timescale conversion
 
-// Helper function for conversion of timescale strings
-// Converts (1|10|100)(s|ms|us|ns|ps|fs) to power of then
-int VL_TIME_STR_CONVERT(const char* strp) VL_PURE {
-    int scale = 0;
-    if (!strp) return 0;
-    if (*strp++ != '1') return 0;
-    while (*strp == '0') {
-        ++scale;
-        ++strp;
-    }
-    switch (*strp++) {
-    case 's': break;
-    case 'm': scale -= 3; break;
-    case 'u': scale -= 6; break;
-    case 'n': scale -= 9; break;
-    case 'p': scale -= 12; break;
-    case 'f': scale -= 15; break;
-    default: return 0;
-    }
-    if ((scale < 0) && (*strp++ != 's')) return 0;
-    if (*strp) return 0;
-    return scale;
-}
 static const char* vl_time_str(int scale) VL_PURE {
     static const char* const names[]
         = {"100s",  "10s",  "1s",  "100ms", "10ms", "1ms", "100us", "10us", "1us",
@@ -2302,8 +2334,9 @@ void VerilatedContext::checkMagic(const VerilatedContext* contextp) {
 }
 
 VerilatedContext::Serialized::Serialized() {
-    m_timeunit = VL_TIME_UNIT;  // Initial value until overriden by _Vconfigure
-    m_timeprecision = VL_TIME_PRECISION;  // Initial value until overriden by _Vconfigure
+    constexpr int8_t picosecond = -12;
+    m_timeunit = picosecond;  // Initial value until overriden by _Vconfigure
+    m_timeprecision = picosecond;  // Initial value until overriden by _Vconfigure
 }
 
 void VerilatedContext::assertOn(bool flag) VL_MT_SAFE {
@@ -2323,9 +2356,9 @@ std::string VerilatedContext::dumpfile() const VL_MT_SAFE_EXCLUDES(m_timeDumpMut
     return m_dumpfile;
 }
 std::string VerilatedContext::dumpfileCheck() const VL_MT_SAFE_EXCLUDES(m_timeDumpMutex) {
-    const std::string out = dumpfile();
+    std::string out = dumpfile();
     if (VL_UNLIKELY(out.empty())) {
-        VL_PRINTF_MT("%%Warning: $dumpvar ignored as not proceeded by $dumpfile\n");
+        VL_PRINTF_MT("%%Warning: $dumpvar ignored as not preceded by $dumpfile\n");
         return "";
     }
     return out;
@@ -2393,23 +2426,25 @@ void VerilatedContext::timeunit(int value) VL_MT_SAFE {
 }
 void VerilatedContext::timeprecision(int value) VL_MT_SAFE {
     if (value < 0) value = -value;  // Stored as 0..15
-    const VerilatedLockGuard lock{m_mutex};
-    m_s.m_timeprecision = value;
-#ifdef SYSTEMC_VERSION
-    const sc_time sc_res = sc_get_time_resolution();
     int sc_prec = 99;
-    if (sc_res == sc_time(1, SC_SEC)) {
-        sc_prec = 0;
-    } else if (sc_res == sc_time(1, SC_MS)) {
-        sc_prec = 3;
-    } else if (sc_res == sc_time(1, SC_US)) {
-        sc_prec = 6;
-    } else if (sc_res == sc_time(1, SC_NS)) {
-        sc_prec = 9;
-    } else if (sc_res == sc_time(1, SC_PS)) {
-        sc_prec = 12;
-    } else if (sc_res == sc_time(1, SC_FS)) {
-        sc_prec = 15;
+    {
+        const VerilatedLockGuard lock{m_mutex};
+        m_s.m_timeprecision = value;
+#ifdef SYSTEMC_VERSION
+        const sc_time sc_res = sc_get_time_resolution();
+        if (sc_res == sc_time(1, SC_SEC)) {
+            sc_prec = 0;
+        } else if (sc_res == sc_time(1, SC_MS)) {
+            sc_prec = 3;
+        } else if (sc_res == sc_time(1, SC_US)) {
+            sc_prec = 6;
+        } else if (sc_res == sc_time(1, SC_NS)) {
+            sc_prec = 9;
+        } else if (sc_res == sc_time(1, SC_PS)) {
+            sc_prec = 12;
+        } else if (sc_res == sc_time(1, SC_FS)) {
+            sc_prec = 15;
+        }
     }
     if (value != sc_prec) {
         std::ostringstream msg;
@@ -2421,11 +2456,40 @@ void VerilatedContext::timeprecision(int value) VL_MT_SAFE {
         const std::string msgs = msg.str();
         VL_FATAL_MT("", 0, "", msgs.c_str());
     }
+#else
+    }
 #endif
 }
 const char* VerilatedContext::timeunitString() const VL_MT_SAFE { return vl_time_str(timeunit()); }
 const char* VerilatedContext::timeprecisionString() const VL_MT_SAFE {
     return vl_time_str(timeprecision());
+}
+
+void VerilatedContext::threads(unsigned n) {
+    if (n == 0) VL_FATAL_MT(__FILE__, __LINE__, "", "%Error: Simulation threads must be >= 1");
+
+    if (m_threadPool) {
+        VL_FATAL_MT(
+            __FILE__, __LINE__, "",
+            "%Error: Cannot set simulation threads after the thread pool has been created.");
+    }
+
+#if VL_THREADED
+    if (m_threads == n) return;  // To avoid unnecessary warnings
+    m_threads = n;
+    const unsigned hardwareThreadsAvailable = std::thread::hardware_concurrency();
+    if (m_threads > hardwareThreadsAvailable) {
+        VL_PRINTF_MT("%%Warning: System has %u hardware threads but simulation thread count set "
+                     "to %u. This will likely cause significant slowdown.\n",
+                     hardwareThreadsAvailable, m_threads);
+    }
+#else
+    if (n > 1) {
+        VL_PRINTF_MT("%%Warning: Verilator run-time library built without VL_THREADS. Ignoring "
+                     "call to 'VerilatedContext::threads' with argument %u.\n",
+                     n);
+    }
+#endif
 }
 
 void VerilatedContext::commandArgs(int argc, const char** argv) VL_MT_SAFE_EXCLUDES(m_argMutex) {
@@ -2456,6 +2520,33 @@ void VerilatedContext::internalsDump() const VL_MT_SAFE {
     impp()->scopesDump();
     VerilatedImp::exportsDump();
     VerilatedImp::userDump();
+}
+
+void VerilatedContext::addModel(VerilatedModel* modelp) {
+    threadPoolp();  // Ensure thread pool is created, so m_threads cannot change any more
+
+    if (modelp->threads() > m_threads) {
+        std::ostringstream msg;
+        msg << "VerilatedContext has " << m_threads << " threads but model '"
+            << modelp->modelName() << "' (instantiated as '" << modelp->hierName()
+            << "') was Verilated with --threads " << modelp->threads() << ".\n";
+        const std::string str = msg.str();
+        VL_FATAL_MT(__FILE__, __LINE__, modelp->hierName(), str.c_str());
+    }
+}
+
+VerilatedVirtualBase* VerilatedContext::threadPoolp() {
+    if (m_threads == 1) return nullptr;
+#if VL_THREADED
+    if (!m_threadPool) m_threadPool.reset(new VlThreadPool{this, m_threads - 1});
+#endif
+    return m_threadPool.get();
+}
+
+VerilatedVirtualBase*
+VerilatedContext::enableExecutionProfiler(VerilatedVirtualBase* (*construct)(VerilatedContext&)) {
+    if (!m_executionProfiler) m_executionProfiler.reset(construct(*this));
+    return m_executionProfiler.get();
 }
 
 //======================================================================
@@ -2767,7 +2858,7 @@ void Verilated::runFlushCallbacks() VL_MT_SAFE {
     // When running internal code coverage (gcc --coverage, as opposed to
     // verilator --coverage), dump coverage data to properly cover failing
     // tests.
-    VL_GCOV_FLUSH();
+    VL_GCOV_DUMP();
 }
 
 void Verilated::addExitCb(VoidPCb cb, void* datap) VL_MT_SAFE {
@@ -2797,7 +2888,7 @@ const char* Verilated::productVersion() VL_PURE { return VERILATOR_VERSION; }
 void Verilated::nullPointerError(const char* filename, int linenum) VL_MT_SAFE {
     // Slowpath - Called only on error
     VL_FATAL_MT(filename, linenum, "", "Null pointer dereferenced");
-    VL_UNREACHABLE
+    VL_UNREACHABLE;
 }
 
 void Verilated::overWidthError(const char* signame) VL_MT_SAFE {
@@ -2805,7 +2896,7 @@ void Verilated::overWidthError(const char* signame) VL_MT_SAFE {
     const std::string msg = (std::string{"Testbench C set input '"} + signame
                              + "' to value that overflows what the signal's width can fit");
     VL_FATAL_MT("unknown", 0, "", msg.c_str());
-    VL_UNREACHABLE
+    VL_UNREACHABLE;
 }
 
 void Verilated::mkdir(const char* dirname) VL_MT_UNSAFE {
@@ -2849,6 +2940,14 @@ void Verilated::endOfEval(VerilatedEvalMsgQueue* evalMsgQp) VL_MT_SAFE {
 void VerilatedImp::versionDump() VL_MT_SAFE {
     VL_PRINTF_MT("  Version: %s %s\n", Verilated::productName(), Verilated::productVersion());
 }
+
+//===========================================================================
+// VerilatedModel:: Methods
+
+VerilatedModel::VerilatedModel(VerilatedContext& context)
+    : m_context{context} {}
+
+std::unique_ptr<VerilatedTraceConfig> VerilatedModel::traceConfig() const { return nullptr; }
 
 //===========================================================================
 // VerilatedModule:: Methods
@@ -3046,5 +3145,20 @@ void VerilatedAssertOneThread::fatal_different() VL_MT_SAFE {
                 " a different thread then the expected constructing thread");
 }
 #endif
+
+//===========================================================================
+// VlDeleter:: Methods
+
+void VlDeleter::deleteAll() {
+    while (true) {
+        VerilatedLockGuard lock{m_mutex};
+        if (m_newGarbage.empty()) break;
+        VerilatedLockGuard deleteLock{m_deleteMutex};
+        std::swap(m_newGarbage, m_toDelete);
+        lock.unlock();  // So destuctors can enqueue new objects
+        for (VlClass* const objp : m_toDelete) delete objp;
+        m_toDelete.clear();
+    }
+}
 
 //===========================================================================

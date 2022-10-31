@@ -28,9 +28,9 @@
 #include <map>
 #include <set>
 #include <string>
-#include <utility>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 class AstNetlist;
@@ -67,7 +67,6 @@ public:
         : m_modp{modp}
         , m_gparams{gparams} {}
     ~V3HierBlock();
-    VL_DEBUG_FUNC;  // Declare debug()
 
     void addParent(V3HierBlock* parentp) { m_parents.insert(parentp); }
     void addChild(V3HierBlock* childp) { m_children.insert(childp); }
@@ -107,9 +106,7 @@ public:
     using iterator = HierMap::iterator;
     using const_iterator = HierMap::const_iterator;
     using HierVector = std::vector<const V3HierBlock*>;
-    VL_DEBUG_FUNC;  // Declare debug()
 
-    bool isHierBlock(const AstNodeModule* modp) const;
     void add(const AstNodeModule* modp, const std::vector<AstVar*>& gparams);
     void registerUsage(const AstNodeModule* parentp, const AstNodeModule* childp);
 

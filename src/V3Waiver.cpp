@@ -6,17 +6,19 @@
 //
 //*************************************************************************
 //
-// Copyright 2020 by Wilson Snyder. This program is free software; you can
-// redistribute it and/or modify it under the terms of either the GNU Lesser
-// General Public License Version 3 or the Perl Artistic License Version 2.0.
+// Copyright 2020-2022 by Wilson Snyder. This program is free software; you
+// can redistribute it and/or modify it under the terms of either the GNU
+// Lesser General Public License Version 3 or the Perl Artistic License
+// Version 2.0.
 // SPDX-License-Identifier: LGPL-3.0-only OR Artistic-2.0
 //
 //*************************************************************************
 
 #include "verilatedos.h"
 
-#include "V3File.h"
 #include "V3Waiver.h"
+
+#include "V3File.h"
 
 #include <memory>
 #include <sstream>

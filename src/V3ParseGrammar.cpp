@@ -18,6 +18,8 @@
 
 #include "V3Ast.h"  // This must be before V3ParseBison.cpp, as we don't want #defines to conflict
 
+VL_DEFINE_DEBUG_FUNCTIONS;
+
 //======================================================================
 // The guts come from bison output
 
@@ -67,16 +69,15 @@ void V3ParseImp::parserClear() {
 //======================================================================
 // V3ParseGrammar functions requiring bison state
 
-AstNode* V3ParseGrammar::argWrapList(AstNode* nodep) {
+AstArg* V3ParseGrammar::argWrapList(AstNode* nodep) {
     // Convert list of expressions to list of arguments
     if (!nodep) return nullptr;
-    AstNode* outp = nullptr;
+    AstArg* outp = nullptr;
     AstBegin* const tempp = new AstBegin(nodep->fileline(), "[EditWrapper]", nodep);
     while (nodep) {
         AstNode* const nextp = nodep->nextp();
         AstNode* const exprp = nodep->unlinkFrBack();
         nodep = nextp;
-        // addNext can handle nulls:
         outp = AstNode::addNext(outp, new AstArg(exprp->fileline(), "", exprp));
     }
     VL_DO_DANGLING(tempp->deleteTree(), tempp);
@@ -84,9 +85,13 @@ AstNode* V3ParseGrammar::argWrapList(AstNode* nodep) {
 }
 
 AstNode* V3ParseGrammar::createSupplyExpr(FileLine* fileline, const string& name, int value) {
-    return new AstAssignW(
-        fileline, new AstVarRef(fileline, name, VAccess::WRITE),
-        new AstConst(fileline, AstConst::StringToParse(), (value ? "'1" : "'0")));
+    AstAssignW* assignp
+        = new AstAssignW{fileline, new AstVarRef{fileline, name, VAccess::WRITE},
+                         new AstConst{fileline, AstConst::StringToParse{}, (value ? "'1" : "'0")}};
+    AstStrengthSpec* strengthSpecp
+        = new AstStrengthSpec{fileline, VStrength::SUPPLY, VStrength::SUPPLY};
+    assignp->strengthSpecp(strengthSpecp);
+    return assignp;
 }
 
 AstRange* V3ParseGrammar::scrubRange(AstNodeRange* nrangep) {
@@ -138,6 +143,8 @@ AstNodeDType* V3ParseGrammar::createArray(AstNodeDType* basep, AstNodeRange* nra
                 AstNode* const keyp = arangep->elementsp()->unlinkFrBack();
                 arrayp = new AstBracketArrayDType(nrangep->fileline(), VFlagChildDType(), arrayp,
                                                   keyp);
+            } else if (VN_IS(nrangep, WildcardRange)) {
+                arrayp = new AstWildcardArrayDType{nrangep->fileline(), VFlagChildDType{}, arrayp};
             } else {
                 UASSERT_OBJ(0, nrangep, "Expected range or unsized range");
             }
@@ -177,7 +184,8 @@ AstVar* V3ParseGrammar::createVariable(FileLine* fileline, const string& name,
         }
     }
     if (type == VVarType::GENVAR) {
-        if (arrayp) fileline->v3error("Genvars may not be arrayed: " << name);
+        // Should be impossible as the grammer blocks this, but...
+        if (arrayp) fileline->v3error("Genvars may not be arrayed: " << name);  // LCOV_EXCL_LINE
     }
 
     // Split RANGE0-RANGE1-RANGE2 into
@@ -198,15 +206,17 @@ AstVar* V3ParseGrammar::createVariable(FileLine* fileline, const string& name,
     }
 
     if (GRAMMARP->m_varDecl == VVarType::SUPPLY0) {
-        nodep->addNext(V3ParseGrammar::createSupplyExpr(fileline, nodep->name(), 0));
+        AstNode::addNext<AstNode, AstNode>(
+            nodep, V3ParseGrammar::createSupplyExpr(fileline, nodep->name(), 0));
     }
     if (GRAMMARP->m_varDecl == VVarType::SUPPLY1) {
-        nodep->addNext(V3ParseGrammar::createSupplyExpr(fileline, nodep->name(), 1));
+        AstNode::addNext<AstNode, AstNode>(
+            nodep, V3ParseGrammar::createSupplyExpr(fileline, nodep->name(), 1));
     }
     if (VN_IS(dtypep, ParseTypeDType)) {
         // Parser needs to know what is a type
         AstNode* const newp = new AstTypedefFwd(fileline, name);
-        nodep->addNext(newp);
+        AstNode::addNext<AstNode, AstNode>(nodep, newp);
         SYMP->reinsert(newp);
     }
     // Don't set dtypep in the ranging;
@@ -268,7 +278,8 @@ string V3ParseGrammar::deQuote(FileLine* fileline, string text) {
                 } else if (*cp == 'x' && isxdigit(cp[1])
                            && isxdigit(cp[2])) {  // SystemVerilog 3.1
 #define vl_decodexdigit(c) ((isdigit(c) ? ((c) - '0') : (tolower((c)) - 'a' + 10)))
-                    newtext += (char)(16 * vl_decodexdigit(cp[1]) + vl_decodexdigit(cp[2]));
+                    newtext
+                        += static_cast<char>(16 * vl_decodexdigit(cp[1]) + vl_decodexdigit(cp[2]));
                     cp += 2;
                 } else if (isalnum(*cp)) {
                     fileline->v3error("Unknown escape sequence: \\" << *cp);
