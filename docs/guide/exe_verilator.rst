@@ -1213,14 +1213,17 @@ Summary:
 
 .. option:: --threads <threads>
 
-.. option:: --no-threads
-
-   With "--threads 0" or "--no-threads", the default, the generated model
-   is not thread safe. With "--threads 1", the generated model is single
-   threaded but may run in a multithreaded environment. With "--threads N",
+   With "--threads 1", the default, the generated model is single threaded
+   but may run in a multithreaded environment. With "--threads N",
    where N >= 2, the model is generated to run multithreaded on up to N
    threads. See :ref:`Multithreading`. This option also applies to
    :vlopt:`--trace` (but not :vlopt:`--trace-fst`).
+
+.. option:: --no-threads
+
+   Deprecated and has no effect (ignored).
+
+   In versions prior to 5.004, created a model which was not thread safe.
 
 .. option:: --threads-dpi all
 
@@ -1487,7 +1490,7 @@ Summary:
    Disable all lint related warning messages, and all style warnings.  This is
    equivalent to ``-Wno-ALWCOMBORDER -Wno-BSSPACE -Wno-CASEINCOMPLETE
    -Wno-CASEOVERLAP -Wno-CASEX -Wno-CASTCONST -Wno-CASEWITHX -Wno-CMPCONST -Wno-COLONPLUS
-   -Wno-ENDLABEL -Wno-IMPLICIT -Wno-LITENDIAN -Wno-PINCONNECTEMPTY
+   -Wno-IMPLICIT -Wno-LITENDIAN -Wno-PINCONNECTEMPTY
    -Wno-PINMISSING -Wno-SYNCASYNCNET -Wno-UNDRIVEN -Wno-UNSIGNED
    -Wno-UNUSEDGENVAR -Wno-UNUSEDPARAM -Wno-UNUSEDSIGNAL
    -Wno-WIDTH`` plus the list shown for Wno-style.
@@ -1523,7 +1526,7 @@ Summary:
    enabled), but do not affect style messages.  This is equivalent to
    ``-Wwarn-ALWCOMBORDER -Wwarn-BSSPACE -Wwarn-CASEINCOMPLETE
    -Wwarn-CASEOVERLAP -Wwarn-CASEX -Wwarn-CASTCONST -Wwarn-CASEWITHX -Wwarn-CMPCONST
-   -Wwarn-COLONPLUS -Wwarn-ENDLABEL -Wwarn-IMPLICIT -Wwarn-LITENDIAN
+   -Wwarn-COLONPLUS -Wwarn-IMPLICIT -Wwarn-LITENDIAN
    -Wwarn-PINMISSING -Wwarn-REALCVT -Wwarn-UNSIGNED -Wwarn-WIDTH``.
 
 .. option:: -Wwarn-style

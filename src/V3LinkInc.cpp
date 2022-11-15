@@ -175,10 +175,6 @@ private:
         m_insStmtp = nullptr;
     }
     void visit(AstNodeStmt* nodep) override {
-        if (!nodep->isStatement()) {
-            iterateChildren(nodep);
-            return;
-        }
         m_insMode = IM_BEFORE;
         m_insStmtp = nodep;
         iterateChildren(nodep);
@@ -195,7 +191,7 @@ private:
     void visit(AstLogEq* nodep) override { unsupported_visit(nodep); }
     void visit(AstLogIf* nodep) override { unsupported_visit(nodep); }
     void visit(AstNodeCond* nodep) override { unsupported_visit(nodep); }
-    void visit(AstPropClocked* nodep) override { unsupported_visit(nodep); }
+    void visit(AstPropSpec* nodep) override { unsupported_visit(nodep); }
     void prepost_visit(AstNodeTriop* nodep) {
         // Check if we are underneath a statement
         if (!m_insStmtp) {

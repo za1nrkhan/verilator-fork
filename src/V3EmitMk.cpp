@@ -26,8 +26,8 @@
 
 VL_DEFINE_DEBUG_FUNCTIONS;
 
-//######################################################################
-// Emit statements and math operators
+// ######################################################################
+//  Emit statements and expressions
 
 class EmitMk final {
 public:
@@ -62,10 +62,6 @@ public:
         of.puts("# Parallel builds?  0/1 (from --output-split)\n");
         of.puts("VM_PARALLEL_BUILDS = ");
         of.puts(v3Global.useParallelBuild() ? "1" : "0");
-        of.puts("\n");
-        of.puts("# Threaded output mode?  0/1/N threads (from --threads)\n");
-        of.puts("VM_THREADS = ");
-        of.puts(cvtToStr(v3Global.opt.threads()));
         of.puts("\n");
         of.puts("# Tracing output mode?  0/1 (from --trace/--trace-fst)\n");
         of.puts("VM_TRACE = ");

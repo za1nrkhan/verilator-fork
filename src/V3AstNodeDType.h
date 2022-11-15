@@ -200,10 +200,10 @@ private:
     using MemberNameMap = std::map<const std::string, AstMemberDType*>;
     // MEMBERS
     string m_name;  // Name from upper typedef, if any
-    bool m_packed;
-    bool m_isFourstate = false;  // V3Width computes
     MemberNameMap m_members;
     const int m_uniqueNum;
+    bool m_packed;
+    bool m_isFourstate = false;  // V3Width computes
 
 protected:
     AstNodeUOrStructDType(VNType t, FileLine* fl, VSigning numericUnpack)
@@ -465,6 +465,7 @@ public:
     int right() const { return littleEndian() ? hi() : lo(); }
     inline bool littleEndian() const;
     bool implicit() const { return keyword() == VBasicDTypeKwd::LOGIC_IMPLICIT; }
+    bool untyped() const { return keyword() == VBasicDTypeKwd::UNTYPED; }
     VNumRange declRange() const { return isRanged() ? VNumRange{left(), right()} : VNumRange{}; }
     void cvtRangeConst();  // Convert to smaller representation
     bool isCompound() const override { return isString(); }

@@ -47,7 +47,7 @@ class DataflowExtractVisitor final : public VNVisitor {
 
     // Expressions considered for extraction as separate assignment to gain more opportunities for
     // optimization, together with the list of variables they read.
-    using Candidates = std::vector<std::pair<AstNodeMath*, std::vector<const AstVar*>>>;
+    using Candidates = std::vector<std::pair<AstNodeExpr*, std::vector<const AstVar*>>>;
 
     // Expressions considered for extraction. All the candidates are pure expressions.
     AstUser4Allocator<AstNodeModule, Candidates> m_extractionCandidates;
@@ -65,7 +65,7 @@ class DataflowExtractVisitor final : public VNVisitor {
 
     // Node considered for extraction as a combinational equation. Trace variable usage/purity.
     void iterateExtractionCandidate(AstNode* nodep) {
-        UASSERT_OBJ(!VN_IS(nodep->backp(), NodeMath), nodep,
+        UASSERT_OBJ(!VN_IS(nodep->backp(), NodeExpr), nodep,
                     "Should not try to extract nested expressions (only root expressions)");
 
         // Simple VarRefs should not be extracted, as they only yield trivial assignments.
@@ -93,7 +93,7 @@ class DataflowExtractVisitor final : public VNVisitor {
         if (m_readVars.empty()) return;
 
         // Add to candidate list
-        m_candidatesp->emplace_back(VN_AS(nodep, NodeMath), std::move(m_readVars));
+        m_candidatesp->emplace_back(VN_AS(nodep, NodeExpr), std::move(m_readVars));
     }
 
     // VISIT methods
@@ -110,7 +110,7 @@ class DataflowExtractVisitor final : public VNVisitor {
             if (!VN_IS(modp, Module)) continue;
 
             for (const auto& pair : m_extractionCandidates(modp)) {
-                AstNodeMath* const nodep = pair.first;
+                AstNodeExpr* const nodep = pair.first;
 
                 // Do not extract expressions without any variable references
                 if (pair.second.empty()) continue;
@@ -204,7 +204,7 @@ class DataflowExtractVisitor final : public VNVisitor {
         m_inForceReleaseLhs = false;
     }
 
-    void visit(AstNodeMath* nodep) override { iterateChildrenConst(nodep); }
+    void visit(AstNodeExpr* nodep) override { iterateChildrenConst(nodep); }
 
     void visit(AstNodeVarRef* nodep) override {
         if (nodep->access().isWriteOrRW()) {
@@ -220,7 +220,7 @@ class DataflowExtractVisitor final : public VNVisitor {
 
     void visit(AstNode* nodep) override {
         // Conservatively assume unhandled nodes are impure. This covers all AstNodeFTaskRef
-        // as AstNodeFTaskRef are sadly not AstNodeMath.
+        // as AstNodeFTaskRef are sadly not AstNodeExpr.
         m_impure = true;
         // Still need to gather all references/force/release, etc.
         iterateChildrenConst(nodep);
@@ -244,9 +244,12 @@ void V3DfgOptimizer::optimize(AstNetlist* netlistp, const string& label) {
     UINFO(2, __FUNCTION__ << ": " << endl);
 
     // NODE STATE
-    // AstVar::user1        -> Used by V3DfgPasses::astToDfg
-    // AstVar::user2        -> bool: Flag indicating referenced by AstVarXRef
+    // AstVar::user1 -> Used by V3DfgPasses::astToDfg and DfgPassed::dfgToAst
+    // AstVar::user2 -> bool: Flag indicating referenced by AstVarXRef (set just below)
+    // AstVar::user3 -> bool: Flag indicating written by logic not representable as DFG
+    //                        (set by V3DfgPasses::astToDfg)
     const VNUser2InUse user2InUse;
+    const VNUser3InUse user3InUse;
 
     // Mark cross-referenced variables
     netlistp->foreach([](const AstVarXRef* xrefp) { xrefp->varp()->user2(true); });

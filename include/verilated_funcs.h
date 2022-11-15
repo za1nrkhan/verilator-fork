@@ -73,11 +73,7 @@ extern void VL_WARN_MT(const char* filename, int linenum, const char* hier,
 
 // clang-format off
 /// Print a string, multithread safe. Eventually VL_PRINTF will get called.
-#ifdef VL_THREADED
 extern void VL_PRINTF_MT(const char* formatp, ...) VL_ATTR_PRINTF(1) VL_MT_SAFE;
-#else
-# define VL_PRINTF_MT VL_PRINTF  // The following parens will take care of themselves
-#endif
 // clang-format on
 
 /// Print a debug message from internals with standard prefix, with printf style format
@@ -448,16 +444,16 @@ static inline void VL_ASSIGNBIT_WO(int bit, WDataOutP owp) VL_MT_SAFE {
     { \
         const int words = VL_WORDS_I(obits); \
         sc_biguint<(obits)> _butemp = (svar).read(); \
-        uint32_t* chunk = _butemp.get_raw(); \
+        uint32_t* chunkp = _butemp.get_raw(); \
         int32_t lsb = 0; \
         while (lsb < obits - BITS_PER_DIGIT) { \
-            const uint32_t data = *chunk; \
-            ++chunk; \
+            const uint32_t data = *chunkp; \
+            ++chunkp; \
             _vl_insert_WI(owp.data(), data, lsb + BITS_PER_DIGIT - 1, lsb); \
             lsb += BITS_PER_DIGIT; \
         } \
         if (lsb < obits) { \
-            const uint32_t msb_data = *chunk; \
+            const uint32_t msb_data = *chunkp; \
             _vl_insert_WI(owp.data(), msb_data, obits - 1, lsb); \
         } \
         (owp)[words - 1] &= VL_MASK_E(obits); \
@@ -504,18 +500,18 @@ static inline void VL_ASSIGNBIT_WO(int bit, WDataOutP owp) VL_MT_SAFE {
     { \
         sc_biguint<(obits)> _butemp; \
         int32_t lsb = 0; \
-        uint32_t* chunk = _butemp.get_raw(); \
+        uint32_t* chunkp = _butemp.get_raw(); \
         while (lsb + VL_SC_BITS_PER_DIGIT < (obits)) { \
             static_assert(std::is_same<IData, EData>::value, "IData and EData missmatch"); \
             const uint32_t data = VL_SEL_IWII(lsb + VL_SC_BITS_PER_DIGIT + 1, (rwp).data(), lsb, \
                                               VL_SC_BITS_PER_DIGIT); \
-            *chunk = data & VL_MASK_E(VL_SC_BITS_PER_DIGIT); \
-            ++chunk; \
+            *chunkp = data & VL_MASK_E(VL_SC_BITS_PER_DIGIT); \
+            ++chunkp; \
             lsb += VL_SC_BITS_PER_DIGIT; \
         } \
         if (lsb < (obits)) { \
             const uint32_t msb_data = VL_SEL_IWII((obits) + 1, (rwp).data(), lsb, (obits)-lsb); \
-            *chunk = msb_data & VL_MASK_E((obits)-lsb); \
+            *chunkp = msb_data & VL_MASK_E((obits)-lsb); \
         } \
         (svar).write(_butemp); \
     }
@@ -590,7 +586,7 @@ static inline WDataOutP VL_EXTENDS_WW(int obits, int lbits, WDataOutP owp,
 // EMIT_RULE: VL_REDAND:  oclean=clean; lclean==clean; obits=1;
 #define VL_REDAND_II(lbits, lhs) ((lhs) == VL_MASK_I(lbits))
 #define VL_REDAND_IQ(lbits, lhs) ((lhs) == VL_MASK_Q(lbits))
-static inline IData VL_REDAND_IW(int lbits, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_REDAND_IW(int lbits, WDataInP const lwp) VL_PURE {
     const int words = VL_WORDS_I(lbits);
     EData combine = lwp[0];
     for (int i = 1; i < words - 1; ++i) combine &= lwp[i];
@@ -601,7 +597,7 @@ static inline IData VL_REDAND_IW(int lbits, WDataInP const lwp) VL_MT_SAFE {
 // EMIT_RULE: VL_REDOR:  oclean=clean; lclean==clean; obits=1;
 #define VL_REDOR_I(lhs) ((lhs) != 0)
 #define VL_REDOR_Q(lhs) ((lhs) != 0)
-static inline IData VL_REDOR_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_REDOR_W(int words, WDataInP const lwp) VL_PURE {
     EData equal = 0;
     for (int i = 0; i < words; ++i) equal |= lwp[i];
     return (equal != 0);
@@ -668,7 +664,7 @@ static inline IData VL_REDXOR_64(QData r) VL_PURE {
     return static_cast<IData>(r);
 #endif
 }
-static inline IData VL_REDXOR_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_REDXOR_W(int words, WDataInP const lwp) VL_PURE {
     EData r = lwp[0];
     for (int i = 1; i < words; ++i) r ^= lwp[i];
     return VL_REDXOR_32(r);
@@ -687,7 +683,7 @@ static inline IData VL_COUNTONES_Q(QData lhs) VL_PURE {
     return VL_COUNTONES_I(static_cast<IData>(lhs)) + VL_COUNTONES_I(static_cast<IData>(lhs >> 32));
 }
 #define VL_COUNTONES_E VL_COUNTONES_I
-static inline IData VL_COUNTONES_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_COUNTONES_W(int words, WDataInP const lwp) VL_PURE {
     EData r = 0;
     for (int i = 0; i < words; ++i) r += VL_COUNTONES_E(lwp[i]);
     return r;
@@ -729,7 +725,7 @@ static inline IData VL_ONEHOT_I(IData lhs) VL_PURE {
 static inline IData VL_ONEHOT_Q(QData lhs) VL_PURE {
     return (((lhs & (lhs - 1)) == 0) & (lhs != 0));
 }
-static inline IData VL_ONEHOT_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_ONEHOT_W(int words, WDataInP const lwp) VL_PURE {
     EData one = 0;
     for (int i = 0; (i < words); ++i) {
         if (lwp[i]) {
@@ -743,7 +739,7 @@ static inline IData VL_ONEHOT_W(int words, WDataInP const lwp) VL_MT_SAFE {
 
 static inline IData VL_ONEHOT0_I(IData lhs) VL_PURE { return ((lhs & (lhs - 1)) == 0); }
 static inline IData VL_ONEHOT0_Q(QData lhs) VL_PURE { return ((lhs & (lhs - 1)) == 0); }
-static inline IData VL_ONEHOT0_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_ONEHOT0_W(int words, WDataInP const lwp) VL_PURE {
     bool one = false;
     for (int i = 0; (i < words); ++i) {
         if (lwp[i]) {
@@ -770,7 +766,7 @@ static inline IData VL_CLOG2_Q(QData lhs) VL_PURE {
     for (; lhs != 0; ++shifts) lhs = lhs >> 1ULL;
     return shifts;
 }
-static inline IData VL_CLOG2_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_CLOG2_W(int words, WDataInP const lwp) VL_PURE {
     const EData adjust = (VL_COUNTONES_W(words, lwp) == 1) ? 0 : 1;
     for (int i = words - 1; i >= 0; --i) {
         if (VL_UNLIKELY(lwp[i])) {  // Shorter worst case if predict not taken
@@ -785,7 +781,7 @@ static inline IData VL_CLOG2_W(int words, WDataInP const lwp) VL_MT_SAFE {
     return 0;
 }
 
-static inline IData VL_MOSTSETBITP1_W(int words, WDataInP const lwp) VL_MT_SAFE {
+static inline IData VL_MOSTSETBITP1_W(int words, WDataInP const lwp) VL_PURE {
     // MSB set bit plus one; similar to FLS.  0=value is zero
     for (int i = words - 1; i >= 0; --i) {
         if (VL_UNLIKELY(lwp[i])) {  // Shorter worst case if predict not taken
@@ -814,7 +810,7 @@ static inline WDataOutP VL_OR_W(int words, WDataOutP owp, WDataInP const lwp,
     return owp;
 }
 // EMIT_RULE: VL_CHANGEXOR:  oclean=1; obits=32; lbits==rbits;
-static inline IData VL_CHANGEXOR_W(int words, WDataInP const lwp, WDataInP const rwp) VL_MT_SAFE {
+static inline IData VL_CHANGEXOR_W(int words, WDataInP const lwp, WDataInP const rwp) VL_PURE {
     IData od = 0;
     for (int i = 0; (i < words); ++i) od |= (lwp[i] ^ rwp[i]);
     return od;
@@ -847,14 +843,14 @@ static inline WDataOutP VL_NOT_W(int words, WDataOutP owp, WDataInP const lwp) V
 #define VL_GTE_W(words, lwp, rwp) (_vl_cmp_w(words, lwp, rwp) >= 0)
 
 // Output clean, <lhs> AND <rhs> MUST BE CLEAN
-static inline IData VL_EQ_W(int words, WDataInP const lwp, WDataInP const rwp) VL_MT_SAFE {
+static inline IData VL_EQ_W(int words, WDataInP const lwp, WDataInP const rwp) VL_PURE {
     EData nequal = 0;
     for (int i = 0; (i < words); ++i) nequal |= (lwp[i] ^ rwp[i]);
     return (nequal == 0);
 }
 
 // Internal usage
-static inline int _vl_cmp_w(int words, WDataInP const lwp, WDataInP const rwp) VL_MT_SAFE {
+static inline int _vl_cmp_w(int words, WDataInP const lwp, WDataInP const rwp) VL_PURE {
     for (int i = words - 1; i >= 0; --i) {
         if (lwp[i] > rwp[i]) return 1;
         if (lwp[i] < rwp[i]) return -1;
@@ -913,7 +909,7 @@ static inline IData VL_LTES_IQQ(int lbits, QData lhs, QData rhs) VL_PURE {
     return lhs_signed <= rhs_signed;
 }
 
-static inline int _vl_cmps_w(int lbits, WDataInP const lwp, WDataInP const rwp) VL_MT_SAFE {
+static inline int _vl_cmps_w(int lbits, WDataInP const lwp, WDataInP const rwp) VL_PURE {
     const int words = VL_WORDS_I(lbits);
     int i = words - 1;
     // We need to flip sense if negative comparison
@@ -929,7 +925,7 @@ static inline int _vl_cmps_w(int lbits, WDataInP const lwp, WDataInP const rwp) 
 }
 
 //=========================================================================
-// Math
+// Expressions
 
 // Output NOT clean
 static inline WDataOutP VL_NEGATE_W(int words, WDataOutP owp, WDataInP const lwp) VL_MT_SAFE {
@@ -1917,7 +1913,7 @@ static inline WDataOutP VL_SEL_WWII(int obits, int lbits, WDataOutP owp, WDataIn
 }
 
 //======================================================================
-// Math needing insert/select
+// Expressions needing insert/select
 
 // Return QData from double (numeric)
 // EMIT_RULE: VL_RTOIROUND_Q_D:  oclean=dirty; lclean==clean/real

@@ -1165,8 +1165,8 @@ class LinkDotFindVisitor final : public VNVisitor {
                                        << nodep->prettyNameQ() << '\n'
                                        << (ansiWarn ? nodep->warnMore()
                                                           + "... note: ANSI ports must have"
-                                                            " type declared with the I/O (IEEE "
-                                                            "1800-2017 23.2.2.2)\n"
+                                                            " type declared with the I/O"
+                                                            " (IEEE 1800-2017 23.2.2.2)\n"
                                                     : "")
                                        << nodep->warnContextPrimary() << '\n'
                                        << findvarp->warnOther()
@@ -1220,20 +1220,15 @@ class LinkDotFindVisitor final : public VNVisitor {
                     && (m_statep->rootEntp()->nodep() == m_modSymp->parentp()->nodep())) {
                     // This is the toplevel module. Check for command line overwrites of parameters
                     // We first search if the parameter is overwritten and then replace it with a
-                    // new value. It will keep the same FileLine information.
+                    // new value.
                     if (v3Global.opt.hasParameter(nodep->name())) {
-                        AstVar* const newp = new AstVar{
-                            nodep->fileline(), VVarType{VVarType::GPARAM}, nodep->name(), nodep};
-                        newp->combineType(nodep);
                         const string svalue = v3Global.opt.parameter(nodep->name());
                         if (AstNode* const valuep
                             = AstConst::parseParamLiteral(nodep->fileline(), svalue)) {
-                            newp->valuep(valuep);
                             UINFO(9, "       replace parameter " << nodep << endl);
-                            UINFO(9, "       with " << newp << endl);
-                            nodep->replaceWith(newp);
-                            VL_DO_DANGLING(pushDeletep(nodep), nodep);
-                            nodep = newp;
+                            UINFO(9, "       with " << valuep << endl);
+                            if (nodep->valuep()) pushDeletep(nodep->valuep()->unlinkFrBack());
+                            nodep->valuep(valuep);
                         }
                     }
                 }
@@ -1731,7 +1726,7 @@ class LinkDotScopeVisitor final : public VNVisitor {
     void visit(AstNodeFTask* nodep) override {
         VSymEnt* const symp = m_statep->insertBlock(m_modSymp, nodep->name(), nodep, nullptr);
         symp->fallbackp(m_modSymp);
-        // No recursion, we don't want to pick up variables
+        iterateChildren(nodep);
     }
     void visit(AstForeach* nodep) override {
         VSymEnt* const symp = m_statep->insertBlock(m_modSymp, nodep->name(), nodep, nullptr);
@@ -2347,7 +2342,7 @@ private:
             AstClass* const classp = VN_AS(classSymp->nodep(), Class);
             AstClassRefDType* const dtypep
                 = new AstClassRefDType{nodep->fileline(), classp, nullptr};
-            AstThisRef* const newp = new AstThisRef{nodep->fileline(), dtypep};
+            AstThisRef* const newp = new AstThisRef{nodep->fileline(), VFlagChildDType{}, dtypep};
             nodep->replaceWith(newp);
             VL_DO_DANGLING(pushDeletep(nodep), nodep);
             return;
@@ -2915,6 +2910,7 @@ private:
                                     outp = AstNode::addNext(outp, addp);
                                 }
                                 newp = new AstSysIgnore(nodep->fileline(), outp);
+                                newp->dtypep(nodep->dtypep());
                             }
                             nodep->replaceWith(newp);
                             VL_DO_DANGLING(nodep->deleteTree(), nodep);

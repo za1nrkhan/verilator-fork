@@ -197,7 +197,7 @@ public:
 /// zero in memory, but during intermediate operations in the Verilated
 /// internals is unpredictable.
 
-static int _vl_cmp_w(int words, WDataInP const lwp, WDataInP const rwp) VL_MT_SAFE;
+static int _vl_cmp_w(int words, WDataInP const lwp, WDataInP const rwp) VL_PURE;
 
 template <std::size_t T_Words>
 struct VlWide final {
@@ -367,7 +367,7 @@ public:
     // Can't just overload operator[] or provide a "at" reference to set,
     // because we need to be able to insert only when the value is set
     T_Value& at(int32_t index) {
-        static VL_THREAD_LOCAL T_Value s_throwAway;
+        static thread_local T_Value s_throwAway;
         // Needs to work for dynamic arrays, so does not use T_MaxSize
         if (VL_UNLIKELY(index < 0 || index >= m_deque.size())) {
             s_throwAway = atDefault();
@@ -378,7 +378,7 @@ public:
     }
     // Accessing. Verilog: v = assoc[index]
     const T_Value& at(int32_t index) const {
-        static VL_THREAD_LOCAL T_Value s_throwAway;
+        static thread_local T_Value s_throwAway;
         // Needs to work for dynamic arrays, so does not use T_MaxSize
         if (VL_UNLIKELY(index < 0 || index >= m_deque.size())) {
             return atDefault();
@@ -1004,7 +1004,14 @@ std::string VL_TO_STRING(const VlUnpacked<T_Value, T_Depth>& obj) {
     return obj.to_string();
 }
 
-class VlClass;  // See below
+//===================================================================
+// Object that VlDeleter is capable of deleting
+
+class VlDeletable VL_NOT_FINAL {
+public:
+    VlDeletable() = default;
+    virtual ~VlDeletable() = default;
+};
 
 //===================================================================
 // Class providing delayed deletion of garbage objects. Objects get deleted only when 'deleteAll()'
@@ -1013,9 +1020,9 @@ class VlClass;  // See below
 class VlDeleter final {
     // MEMBERS
     // Queue of new objects that should be deleted
-    std::vector<VlClass*> m_newGarbage VL_GUARDED_BY(m_mutex);
+    std::vector<VlDeletable*> m_newGarbage VL_GUARDED_BY(m_mutex);
     // Queue of objects currently being deleted (only for deleteAll())
-    std::vector<VlClass*> m_toDelete VL_GUARDED_BY(m_deleteMutex);
+    std::vector<VlDeletable*> m_toDelete VL_GUARDED_BY(m_deleteMutex);
     mutable VerilatedMutex m_mutex;  // Mutex protecting the 'new garbage' queue
     mutable VerilatedMutex m_deleteMutex;  // Mutex protecting the delete queue
 
@@ -1030,7 +1037,7 @@ private:
 public:
     // METHODS
     // Adds a new object to the 'new garbage' queue.
-    void put(VlClass* const objp) VL_MT_SAFE {
+    void put(VlDeletable* const objp) VL_MT_SAFE {
         const VerilatedLockGuard lock{m_mutex};
         m_newGarbage.push_back(objp);
     }
@@ -1042,17 +1049,16 @@ public:
 //===================================================================
 // Base class for all verilated classes. Includes a reference counter, and a pointer to the deleter
 // object that should destroy it after the counter reaches 0. This allows for easy construction of
-// VlClassRefs from 'this'. Also declares a virtual constructor, so that the object can be deleted
-// using a base pointer.
+// VlClassRefs from 'this'.
 
-class VlClass VL_NOT_FINAL {
+class VlClass VL_NOT_FINAL : public VlDeletable {
     // TYPES
     template <typename T_Class>
     friend class VlClassRef;  // Needed for access to the ref counter and deleter
 
     // MEMBERS
     std::atomic<size_t> m_counter{0};  // Reference count for this object
-    VlDeleter* m_deleter = nullptr;  // The deleter that will delete this object
+    VlDeleter* m_deleterp = nullptr;  // The deleter that will delete this object
 
     // METHODS
     // Atomically increments the reference counter
@@ -1060,19 +1066,20 @@ class VlClass VL_NOT_FINAL {
     // Atomically decrements the reference counter. Assuming VlClassRef semantics are sound, it
     // should never get called at m_counter == 0.
     void refCountDec() VL_MT_SAFE {
-        if (!--m_counter) m_deleter->put(this);
+        if (!--m_counter) m_deleterp->put(this);
     }
 
 public:
     // CONSTRUCTORS
     VlClass() = default;
     VlClass(const VlClass& copied) {}
-    virtual ~VlClass() {}
+    ~VlClass() override = default;
 };
 
 //===================================================================
 // Represents the null pointer. Used for setting VlClassRef to null instead of
 // via nullptr_t, to prevent the implicit conversion of 0 to nullptr.
+
 struct VlNull {
     operator bool() const { return false; }
 };
@@ -1110,7 +1117,7 @@ public:
     template <typename... T_Args>
     VlClassRef(VlDeleter& deleter, T_Args&&... args)
         : m_objp{new T_Class{std::forward<T_Args>(args)...}} {
-        m_objp->m_deleter = &deleter;
+        m_objp->m_deleterp = &deleter;
         refCountInc();
     }
     // Explicit to avoid implicit conversion from 0
@@ -1172,6 +1179,19 @@ public:
     operator bool() const { return m_objp; }
 };
 
+template <typename T, typename U>
+static inline bool VL_CAST_DYNAMIC(VlClassRef<T> in, VlClassRef<U>& outr) {
+    VlClassRef<U> casted = in.template dynamicCast<U>();
+    if (VL_LIKELY(casted)) {
+        outr = casted;
+        return true;
+    } else {
+        return false;
+    }
+}
+
+//======================================================================
+
 #define VL_NEW(Class, ...) \
     VlClassRef<Class> { vlSymsp->__Vm_deleter, __VA_ARGS__ }
 
@@ -1182,17 +1202,6 @@ template <class T>  // T typically of type VlClassRef<x>
 inline T VL_NULL_CHECK(T t, const char* filename, int linenum) {
     if (VL_UNLIKELY(!t)) Verilated::nullPointerError(filename, linenum);
     return t;
-}
-
-template <typename T, typename U>
-static inline bool VL_CAST_DYNAMIC(VlClassRef<T> in, VlClassRef<U>& outr) {
-    VlClassRef<U> casted = in.template dynamicCast<U>();
-    if (VL_LIKELY(casted)) {
-        outr = casted;
-        return true;
-    } else {
-        return false;
-    }
 }
 
 //======================================================================
