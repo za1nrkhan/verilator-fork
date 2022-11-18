@@ -1525,6 +1525,25 @@ public:
     int instrCount() const override { return widthInstrs(); }
     bool same(const AstNode* /*samep*/) const override { return true; }
 };
+class AstStackTraceF final : public AstNodeExpr {
+    // $stacktrace used as function
+public:
+    AstStackTraceF(FileLine* fl)
+        : ASTGEN_SUPER_StackTraceF(fl) {
+        dtypeSetString();
+    }
+    ASTGEN_MEMBERS_AstStackTraceF;
+    string verilogKwd() const override { return "$stacktrace"; }
+    string emitVerilog() override { return verilogKwd(); }
+    string emitC() override { return "VL_STACKTRACE_N()"; }
+    bool isGateOptimizable() const override { return false; }
+    bool isPredictOptimizable() const override { return false; }
+    bool isPure() const override { return false; }
+    bool isOutputter() const override { return true; }
+    bool isUnlikely() const override { return true; }
+    bool cleanOut() const override { return true; }
+    bool same(const AstNode* /*samep*/) const override { return true; }
+};
 class AstSysIgnore final : public AstNodeExpr {
     // @astgen op1 := exprsp : List[AstNode] // Expressions to output (???)
 public:
@@ -1596,6 +1615,39 @@ public:
     bool cleanOut() const override { return true; }
     AstNodeDType* getChildDTypep() const override { return childDTypep(); }
     AstNodeDType* subDTypep() const { return dtypep() ? dtypep() : childDTypep(); }
+};
+class AstTimePrecision final : public AstNodeExpr {
+    // Verilog $timeprecision
+public:
+    AstTimePrecision(FileLine* fl)
+        : ASTGEN_SUPER_TimePrecision(fl) {
+        dtypeSetSigned32();
+    }
+    ASTGEN_MEMBERS_AstTimePrecision;
+    string emitVerilog() override { return "$timeprecision"; }
+    string emitC() override { V3ERROR_NA_RETURN(""); }
+    string emitSimpleOperator() override { V3ERROR_NA_RETURN(""); }
+    bool cleanOut() const override { return true; }
+    int instrCount() const override { return widthInstrs(); }
+    bool same(const AstNode* /*samep*/) const override { return true; }
+};
+class AstTimeUnit final : public AstNodeExpr {
+    VTimescale m_timeunit;  // Parent module time unit
+    // Verilog $timeunit
+public:
+    AstTimeUnit(FileLine* fl)
+        : ASTGEN_SUPER_TimeUnit(fl) {
+        dtypeSetSigned32();
+    }
+    ASTGEN_MEMBERS_AstTimeUnit;
+    string emitVerilog() override { return "$timeunit"; }
+    string emitC() override { V3ERROR_NA_RETURN(""); }
+    string emitSimpleOperator() override { V3ERROR_NA_RETURN(""); }
+    bool cleanOut() const override { return true; }
+    int instrCount() const override { return widthInstrs(); }
+    bool same(const AstNode* /*samep*/) const override { return true; }
+    void timeunit(const VTimescale& flag) { m_timeunit = flag; }
+    VTimescale timeunit() const { return m_timeunit; }
 };
 class AstUCFunc final : public AstNodeExpr {
     // User's $c function

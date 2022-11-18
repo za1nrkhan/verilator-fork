@@ -25,6 +25,12 @@ or "`ifdef`"'s may break other tools.
 
    This will report an error when encountered, like C++'s #error.
 
+.. option:: """ [string] """
+
+   A triple-quoted block specifies a string which may include newlines and
+   single quotes.  This extension is experimental and may be removed
+   without deprecation.
+
 .. option:: $c([string], ...);
 
    The string will be embedded directly in the output C++ code at the point
@@ -72,6 +78,16 @@ or "`ifdef`"'s may break other tools.
    prints a number with minimum width.  Verilator extends this so %5x
    prints 5 digits per the C standard (this is unspecified in Verilog, but
    was incorporated into the 1800-2009).
+
+.. option:: $timeprecision
+
+   Returns the timeprecision of the model as an integer.  This extension is
+   experimental and may be removed without deprecation.
+
+.. option:: $timeunit
+
+   Returns the timeunit of the current module as an integer.  This
+   extension is experimental and may be removed without deprecation.
 
 .. option:: `coverage_block_off
 
@@ -544,3 +560,14 @@ or "`ifdef`"'s may break other tools.
 
    Re-enable waveform tracing for all future signals or instances that are
    declared.
+
+.. option:: $stacktrace
+
+   Called as a task, orint a stack trace.  Called as a function, return a
+   string with a stack trace.  This relies on the C++ system trace, which
+   may give less meaningful results if the model was not compiled with
+   debug symbols.  Also the data represents the C++ stack, the
+   SystemVerilog functions/tasks involved may be renamed and/or inlined
+   before becoming the C++ functions that may be visible in the stack
+   trace.  This extension is experimental and may be removed without
+   deprecation.

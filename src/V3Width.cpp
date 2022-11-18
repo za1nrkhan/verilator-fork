@@ -446,6 +446,11 @@ private:
     // Widths: Constant, terminal
     void visit(AstTime* nodep) override { nodep->dtypeSetUInt64(); }
     void visit(AstTimeD* nodep) override { nodep->dtypeSetDouble(); }
+    void visit(AstTimePrecision* nodep) override { nodep->dtypeSetSigned32(); }
+    void visit(AstTimeUnit* nodep) override {
+        nodep->replaceWith(
+            new AstConst{nodep->fileline(), AstConst::Signed32(), nodep->timeunit().powerOfTen()});
+    }
     void visit(AstScopeName* nodep) override {
         nodep->dtypeSetUInt64();  // A pointer, but not that it matters
     }
@@ -609,7 +614,7 @@ private:
         if (nodep->fileline()->timingOn()) {
             if (v3Global.opt.timing().isSetTrue()) {
                 userIterate(nodep->lhsp(), WidthVP{nullptr, BOTH}.p());
-                iterateNull(nodep->stmtsp());
+                iterateAndNextNull(nodep->stmtsp());
                 return;
             } else if (v3Global.opt.timing().isSetFalse()) {
                 nodep->v3warn(STMTDLY, "Ignoring delay on this statement due to --no-timing");
@@ -619,7 +624,7 @@ private:
                     "Use --timing or --no-timing to specify how delays should be handled");
             }
         }
-        if (nodep->stmtsp()) nodep->addNextHere(nodep->stmtsp()->unlinkFrBack());
+        if (nodep->stmtsp()) nodep->addNextHere(nodep->stmtsp()->unlinkFrBackWithNext());
         VL_DO_DANGLING(pushDeletep(nodep->unlinkFrBack()), nodep);
     }
     void visit(AstFork* nodep) override {
@@ -4198,15 +4203,27 @@ private:
                 // Prep for next
                 fromDtp = fromDtp->subDTypep();
             } else if (AstBasicDType* const adtypep = VN_CAST(fromDtp, BasicDType)) {
-                if (!adtypep->isRanged()) {
+                if (adtypep->isString()) {
+                    if (varp) {
+                        AstConst* const leftp = new AstConst{fl, AstConst::Signed32{}, 0};
+                        AstLt* const condp = new AstLt{fl, new AstVarRef{fl, varp, VAccess::READ},
+                                                       new AstLenN{fl, fromp->cloneTree(false)}};
+                        AstAdd* const incp
+                            = new AstAdd{fl, new AstConst{fl, AstConst::Signed32{}, 1},
+                                         new AstVarRef{fl, varp, VAccess::READ}};
+                        loopp = createForeachLoop(nodep, bodyPointp, varp, leftp, condp, incp);
+                    }
+                } else if (!adtypep->isRanged()) {
                     argsp->v3error("Illegal to foreach loop on basic '" + fromDtp->prettyTypeName()
                                    + "'");
                     VL_DO_DANGLING(nodep->unlinkFrBack()->deleteTree(), nodep);
                     VL_DO_DANGLING(bodyPointp->deleteTree(), bodyPointp);
                     return;
-                }
-                if (varp) {
-                    loopp = createForeachLoopRanged(nodep, bodyPointp, varp, adtypep->declRange());
+                } else {
+                    if (varp) {
+                        loopp = createForeachLoopRanged(nodep, bodyPointp, varp,
+                                                        adtypep->declRange());
+                    }
                 }
                 // Prep for next
                 fromDtp = nullptr;
@@ -4671,6 +4688,7 @@ private:
             userIterateAndNext(nodep->exprsp(), WidthVP(SELF, BOTH).p());
         }
     }
+    void visit(AstStackTraceF* nodep) override { nodep->dtypeSetString(); }
     void visit(AstSysIgnore* nodep) override {
         userIterateAndNext(nodep->exprsp(), WidthVP(SELF, BOTH).p());
     }

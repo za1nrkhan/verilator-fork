@@ -775,6 +775,8 @@ public:
         iterateAndNextNull(nodep->lhsp());
         if (!nodep->lhsp()->isWide()) puts(";");
     }
+    void visit(AstStackTraceF* nodep) override { puts("VL_STACKTRACE_N()"); }
+    void visit(AstStackTraceT* nodep) override { puts("VL_STACKTRACE();\n"); }
     void visit(AstSystemT* nodep) override {
         puts("(void)VL_SYSTEM_I");
         emitIQW(nodep->lhsp());
@@ -876,7 +878,7 @@ public:
     }
     void visit(AstPrintTimeScale* nodep) override {
         puts("VL_PRINTTIMESCALE(");
-        putsQuoted(protect(nodep->name()));
+        putsQuoted(protect(nodep->prettyName()));
         puts(", ");
         putsQuoted(nodep->timeunit().ascii());
         puts(", vlSymsp->_vm_contextp__);\n");
@@ -908,6 +910,9 @@ public:
         puts(", ");
         iterateAndNextNull(nodep->widthp());
         puts(", vlSymsp->_vm_contextp__);\n");
+    }
+    void visit(AstTimePrecision* nodep) override {
+        puts("vlSymsp->_vm_contextp__->timeprecision()");
     }
     void visit(AstNodeSimpleText* nodep) override {
         const string text = m_inUC && m_useSelfForThis

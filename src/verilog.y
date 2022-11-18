@@ -860,6 +860,7 @@ BISONPRE_VERSION(3.7,%define api.header.include {"V3ParseBison.h"})
 %token<fl>              yD_SQRT         "$sqrt"
 %token<fl>              yD_SSCANF       "$sscanf"
 %token<fl>              yD_STABLE       "$stable"
+%token<fl>              yD_STACKTRACE   "$stacktrace"
 %token<fl>              yD_STIME        "$stime"
 %token<fl>              yD_STOP         "$stop"
 %token<fl>              yD_STROBE       "$strobe"
@@ -876,6 +877,8 @@ BISONPRE_VERSION(3.7,%define api.header.include {"V3ParseBison.h"})
 %token<fl>              yD_TESTPLUSARGS "$test$plusargs"
 %token<fl>              yD_TIME         "$time"
 %token<fl>              yD_TIMEFORMAT   "$timeformat"
+%token<fl>              yD_TIMEPRECISION "$timeprecision"
+%token<fl>              yD_TIMEUNIT     "$timeunit"
 %token<fl>              yD_TYPENAME     "$typename"
 %token<fl>              yD_UNGETC       "$ungetc"
 %token<fl>              yD_UNIT         "$unit"
@@ -3786,6 +3789,7 @@ system_t_call<nodep>:           // IEEE: system_tf_call (as task)
         |       yD_DUMPON '(' expr ')'                  { $$ = new AstDumpCtl($<fl>1, VDumpCtlType::ON); DEL($3); }
         //
         |       yD_C '(' cStrList ')'                   { $$ = (v3Global.opt.ignc() ? nullptr : new AstUCStmt($1,$3)); }
+        |       yD_STACKTRACE parenE                    { $$ = new AstStackTraceT{$1}; }
         |       yD_SYSTEM '(' expr ')'                  { $$ = new AstSystemT($1, $3); }
         //
         |       yD_EXIT parenE                          { $$ = new AstFinish($1); }
@@ -3861,10 +3865,11 @@ system_t_call<nodep>:           // IEEE: system_tf_call (as task)
         |       yD_MONITOROFF parenE                    { $$ = new AstMonitorOff($1, true); }
         |       yD_MONITORON parenE                     { $$ = new AstMonitorOff($1, false); }
         //
-        |       yD_PRINTTIMESCALE                       { $$ = new AstPrintTimeScale($1); }
-        |       yD_PRINTTIMESCALE '(' ')'               { $$ = new AstPrintTimeScale($1); }
-        |       yD_PRINTTIMESCALE '(' idClassSel ')'    { $$ = new AstPrintTimeScale($1); DEL($3); }
-        |       yD_TIMEFORMAT '(' expr ',' expr ',' expr ',' expr ')'   { $$ = new AstTimeFormat($1, $3, $5, $7, $9); }
+        |       yD_PRINTTIMESCALE                       { $$ = new AstPrintTimeScale{$1}; }
+        |       yD_PRINTTIMESCALE '(' ')'               { $$ = new AstPrintTimeScale{$1}; }
+        |       yD_PRINTTIMESCALE '(' idClassSel ')'    { $$ = new AstPrintTimeScale{$1}; DEL($3); }
+        |       yD_TIMEFORMAT '(' expr ',' expr ',' expr ',' expr ')'
+                        { $$ = new AstTimeFormat{$1, $3, $5, $7, $9}; }
         //
         |       yD_READMEMB '(' expr ',' idClassSel ')'                         { $$ = new AstReadMem($1,false,$3,$5,nullptr,nullptr); }
         |       yD_READMEMB '(' expr ',' idClassSel ',' expr ')'                { $$ = new AstReadMem($1,false,$3,$5,$7,nullptr); }
@@ -3894,6 +3899,7 @@ system_f_call<nodeExprp>:           // IEEE: system_tf_call (as func)
         //
         |       yD_C '(' cStrList ')'                   { $$ = (v3Global.opt.ignc() ? nullptr : new AstUCFunc($1,$3)); }
         |       yD_CAST '(' expr ',' expr ')'           { $$ = new AstCastDynamic($1, $5, $3); }
+        |       yD_STACKTRACE parenE                    { $$ = new AstStackTraceF{$1}; }
         |       yD_SYSTEM  '(' expr ')'                 { $$ = new AstSystemF($1,$3); }
         //
         |       system_f_call_or_t                      { $$ = $1; }
@@ -3994,6 +4000,12 @@ system_f_call_or_t<nodeExprp>:      // IEEE: part of system_tf_call (can be task
         |       yD_TANH '(' expr ')'                    { $$ = new AstTanhD($1,$3); }
         |       yD_TESTPLUSARGS '(' expr ')'            { $$ = new AstTestPlusArgs($1, $3); }
         |       yD_TIME parenE                          { $$ = new AstTime{$1, VTimescale{VTimescale::NONE}}; }
+        |       yD_TIMEPRECISION                        { $$ = new AstTimePrecision{$1}; }
+        |       yD_TIMEPRECISION '(' ')'                { $$ = new AstTimePrecision{$1}; }
+        |       yD_TIMEPRECISION '(' idClassSel ')'     { $$ = new AstTimePrecision{$1}; DEL($3); }
+        |       yD_TIMEUNIT                             { $$ = new AstTimeUnit{$1}; }
+        |       yD_TIMEUNIT '(' ')'                     { $$ = new AstTimeUnit{$1}; }
+        |       yD_TIMEUNIT '(' idClassSel ')'          { $$ = new AstTimeUnit{$1}; DEL($3); }
         |       yD_TYPENAME '(' exprOrDataType ')'      { $$ = new AstAttrOf($1, VAttrType::TYPENAME, $3); }
         |       yD_UNGETC '(' expr ',' expr ')'         { $$ = new AstFUngetC($1, $5, $3); }  // Arg swap to file first
         |       yD_UNPACKED_DIMENSIONS '(' exprOrDataType ')'   { $$ = new AstAttrOf($1,VAttrType::DIM_UNPK_DIMENSIONS,$3); }
