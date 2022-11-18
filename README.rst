@@ -24,7 +24,7 @@ Welcome to Verilator
 
 - patch at branch: v5.002-vpi-callback-patch
 - cocotb_ver="1.7.1"
-- cocotb_bus_ver="v0.1.0" (if using `alexforencich/cocotbext-axi<https://github.com/alexforencich/cocotbext-axi>`_, `issue 35<https://github.com/alexforencich/cocotbext-axi/issues/35>`_)
+- cocotb_bus_ver="v0.1.0" (if using `alexforencich/cocotbext-axi <https://github.com/alexforencich/cocotbext-axi>`_, `Simulation gets stuck with SIM=verilator 4.106 #35 <https://github.com/alexforencich/cocotbext-axi/issues/35>`_)
 
 ----------
 
