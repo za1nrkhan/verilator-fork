@@ -146,6 +146,11 @@ Verilator is free software; you can redistribute it and/or modify it under
 the terms of either the GNU Lesser General Public License Version 3 or the
 Perl Artistic License Version 2.0. See the documentation for more details.
 
+About this Fork
+===============
+An up-to-date Verialtor fork/version v5.002 to work with CoCoTB
+
+
 .. _CHIPS Alliance: https://chipsalliance.org
 .. _Icarus Verilog: http://iverilog.icarus.com
 .. _Linux Foundation: https://www.linuxfoundation.org
