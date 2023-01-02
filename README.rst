@@ -148,7 +148,7 @@ Perl Artistic License Version 2.0. See the documentation for more details.
 
 About this Fork
 ===============
-An up-to-date Verialtor fork/version v5.002 to work with CoCoTB
+An up-to-date Verialtor fork/version v5.002 to work with CoCoTB. According to the comment https://github.com/verilator/verilator/issues/2778#issuecomment-1320285567 the tag ```v5.002``` was used for the patch, and the fix, although made officially in 5.004 again breaks the proper functioning of Verilator with CoCoTB. Dating back to when CoCoTB supported only ```v4.106``` the pull request https://github.com/themperek/cocotb-test/pull/118 which hinted at a GPI bug on the callback for ```NextTimeStep```, ```ReadWrite```, ```ReadOnly``` triggers.
 
 
 .. _CHIPS Alliance: https://chipsalliance.org
